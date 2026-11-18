@@ -1,0 +1,19 @@
+name: Isolated Supabase quest verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [draft/parent-sync]
+    paths: [tests/live-quest-sync.cjs, .github/workflows/quest-live-test.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node tests/live-quest-sync.cjs

@@ -1,0 +1,19 @@
+name: Isolated Supabase quest browser verification
+on:
+  push:
+    branches: [draft/parent-sync]
+    paths: [tests/live-quest-browser.cjs, .github/workflows/quest-live-browser.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm install --no-save --ignore-scripts playwright-core
+      - run: node tests/live-quest-browser.cjs
