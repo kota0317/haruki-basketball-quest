@@ -1,38 +1,19 @@
--- DRAFT: NOT APPLIED. Requires separate security review and end-to-end tests.
+-- SIMPLIFIED DRAFT: NOT APPLIED. Requires security review and real Auth end-to-end tests.
 -- Supabase anonymous Auth for both roles; project-owner approval for initial and recovery parent devices.
 -- A revoked device is denied by RLS immediately, even while its JWT remains valid.
 -- This does NOT revoke the Supabase Auth refresh token itself.
--- Singleton stable family ID. Migration fails closed if legacy data contains more than one parent.
-create table hq_private.household (
-  singleton boolean primary key default true check (singleton),
-  id uuid not null unique default pg_catalog.gen_random_uuid(),
-  created_at timestamptz not null default now()
-);
-alter table hq_private.household enable row level security;
-revoke all on hq_private.household from public,anon,authenticated;
-insert into hq_private.household(id) select distinct parent_id from public.hq_parent_links;
-alter table public.hq_parent_links drop constraint hq_parent_links_parent_id_fkey;
-alter table public.hq_parent_links add constraint hq_parent_links_parent_id_fkey foreign key (parent_id) references hq_private.household(id);
-
--- Stable learner identity survives anonymous account loss or replacement.
-create table hq_private.learners (id uuid primary key default pg_catalog.gen_random_uuid(), created_at timestamptz not null default now());
-alter table hq_private.learners enable row level security;
-revoke all on hq_private.learners from public,anon,authenticated;
-insert into hq_private.learners(id)
-  select learner_id from public.hq_parent_links union select learner_id from public.hq_learning_events union select learner_id from public.hq_study_plans
-  on conflict do nothing;
-alter table public.hq_parent_links drop constraint hq_parent_links_learner_id_fkey;
-alter table public.hq_parent_links add constraint hq_parent_links_learner_id_fkey foreign key (learner_id) references hq_private.learners(id);
-alter table public.hq_learning_events drop constraint hq_learning_events_learner_id_fkey;
-alter table public.hq_learning_events add constraint hq_learning_events_learner_id_fkey foreign key (learner_id) references hq_private.learners(id);
-alter table public.hq_study_plans drop constraint hq_study_plans_learner_id_fkey;
-alter table public.hq_study_plans add constraint hq_study_plans_learner_id_fkey foreign key (learner_id) references hq_private.learners(id);
+-- Preserve existing public tables and Auth foreign keys. Refuse ambiguous legacy data.
+do $$ begin
+ if (select count(distinct parent_id) from public.hq_parent_links)>1
+ or (select count(*) from (select learner_id from public.hq_parent_links union select learner_id from public.hq_learning_events union select learner_id from public.hq_study_plans) q)>1
+ then raise exception 'multiple legacy families or learners require manual migration'; end if;
+end $$;
 
 create table hq_private.device_grants (
   session_id uuid primary key,
   principal_id uuid not null,
-  parent_id uuid not null references hq_private.household(id),
-  learner_id uuid references hq_private.learners(id),
+  parent_id uuid not null references auth.users(id),
+  learner_id uuid references auth.users(id),
   role text not null check (role in ('parent','child')),
   created_at timestamptz not null default now(),
   revoked_at timestamptz,
@@ -46,8 +27,8 @@ create index hq_device_learner_idx on hq_private.device_grants(learner_id, role,
 
 create table hq_private.device_invites (
   token_hash bytea primary key,
-  parent_id uuid not null references hq_private.household(id),
-  learner_id uuid references hq_private.learners(id),
+  parent_id uuid not null references auth.users(id),
+  learner_id uuid references auth.users(id),
   issuing_session uuid not null references hq_private.device_grants(session_id),
   unique (parent_id),
   expires_at timestamptz not null default (now() + interval '15 minutes')
@@ -134,8 +115,11 @@ declare req hq_private.parent_requests%rowtype; family uuid;
 begin
  select * into req from hq_private.parent_requests r where r.request_id=p_request and r.expires_at>now() for update;
  if not found then raise exception 'request invalid or expired'; end if;
- insert into hq_private.household(singleton) values(true) on conflict(singleton) do nothing;
- select id into family from hq_private.household where singleton=true;
+ -- Serialize initial setup and recovery so two owner approvals cannot create different families.
+ perform pg_catalog.pg_advisory_xact_lock(672513,1);
+ select d.parent_id into family from hq_private.device_grants d order by d.created_at limit 1;
+ if family is null then select l.parent_id into family from public.hq_parent_links l limit 1; end if;
+ if family is null then family := req.principal_id; end if;
  insert into hq_private.device_grants(session_id,principal_id,parent_id,role) values(req.session_id,req.principal_id,family,'parent');
  delete from hq_private.parent_requests where request_id=p_request;
 end $$;
@@ -156,11 +140,14 @@ begin
   if p_token is null or p_token !~ '^[0-9a-f]{64}$' then raise exception 'invalid token'; end if;
   select i.* into invitation from hq_private.device_invites i where i.token_hash=extensions.digest(p_token,'sha256') and i.expires_at>now() and exists (select 1 from hq_private.device_grants d where d.session_id=i.issuing_session and d.parent_id=i.parent_id and d.role='parent' and d.revoked_at is null) for update of i;
   if not found then raise exception 'invalid or expired token'; end if;
-  if invitation.learner_id is null then
-    insert into hq_private.learners default values returning id into v_learner;
-  else
-    v_learner=invitation.learner_id;
+  perform pg_catalog.pg_advisory_xact_lock(672513,1);
+  if exists (select 1 from hq_private.device_grants d where d.principal_id=auth.uid() and d.role='parent') then raise exception 'parent cannot register as child'; end if;
+  v_learner=invitation.learner_id;
+  if v_learner is null then
+    select q.learner_id into v_learner from (select learner_id from public.hq_parent_links union select learner_id from public.hq_learning_events union select learner_id from public.hq_study_plans) q limit 1;
+    if v_learner is null then v_learner=auth.uid(); end if;
   end if;
+  if v_learner=invitation.parent_id then raise exception 'parent and learner must differ'; end if;
   if invitation.learner_id is not null and not exists(select 1 from public.hq_parent_links l where l.parent_id=invitation.parent_id and l.learner_id=v_learner) then raise exception 'learner not linked'; end if;
   insert into public.hq_parent_links(learner_id,parent_id) values(v_learner,invitation.parent_id) on conflict do nothing;
   -- A reused or revoked session cannot be rebound or silently revived.
