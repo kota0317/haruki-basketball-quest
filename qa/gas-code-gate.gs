@@ -10,7 +10,7 @@ function doPost(e) {
     try { parsed = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (_) { parsed = {}; }
     var input = typeof parsed.code === 'string' ? parsed.code : '';
     var configured = props.getProperty('TEST_ONLY_CODE') || '';
-    var valid = /^\\d{4}$/.test(input) && /^\\d{4}$/.test(configured);
+    var valid = /^[0-9]{4}$/.test(input) && /^[0-9]{4}$/.test(configured);
     var diff = 0;
     for (var i = 0; i < 4; i++) diff |= (input.charCodeAt(i) || 0) ^ (configured.charCodeAt(i) || 0);
     if (!valid || diff !== 0) {
