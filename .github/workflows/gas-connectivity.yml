@@ -1,0 +1,17 @@
+name: GAS dummy connectivity QA
+on:
+  push:
+    branches: [gas-connectivity-qa]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --ignore-scripts playwright-core
+      - run: node tests/gas-connectivity.cjs
