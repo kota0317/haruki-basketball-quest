@@ -1,22 +1,9 @@
-# GAS sync: isolated model only
+# Apps Script sync draft — not for production
 
-This draft is not connected to Sheets, Apps Script, the app, or real data.
-Do not deploy or use it for family data. The previous Supabase PR remains separate.
+This branch includes an unverified Apps Script API draft. It is not deployed, not connected to the existing app and must not be used for real family data. A separate test-only spreadsheet has been created; the deployed synthetic gateway does not access it.
 
-Run `node gas-draft/quest-core.test.cjs`.
+Run `node gas-draft/quest-core.test.cjs` and `node gas-draft/sheets-api.test.cjs`. The latter uses mocked Apps Script/Sheets; it does not demonstrate actual persistence.
 
-The model demonstrates duplicate operation handling, per-record revision conflict detection,
-completion undo and XP calculation. It does not implement migration, real authentication,
-durable storage, cross-device queueing, legacy data merging, or the game integration.
-A stale edit must be retained on-device and resolved by the client; it is never silently discarded.
+The draft API validates a five-digit string stored in Script Properties, reads an operation log from a private Sheet, serializes writes using a script lock, handles retries and per-record conflicts, and projects XP from current completion records. It uses a global temporary lock after wrong codes: this can delay legitimate users. It currently lacks safe migration, legacy records and game synchronization, client/UI, offline queue, testing with actual Apps Script Sheets access, and required release approval. The sample sheet and test script do not contain the family code.
 
-Apps Script web-app request events do not provide a documented trustworthy client IP.
-Rate-limiting a caller-supplied device ID can be evaded by changing that ID.
-An attacker can continue trying the fixed five-digit code if there is no shared limit or an
-independent abuse-control mechanism. A global lock is a denial-of-service risk.
-A solution satisfying the request's limits must be verified before handling real records.
-
-Formula safety, secret provisioning, random device credentials, revocation, crash-safe
-persistence, and real Sheets concurrency remain unresolved and untested.
-The earlier automated rejection applies to production Supabase changes;
-this independent draft does not constitute approval for a real-data deployment.
+The Google authorization screen currently says this app is unverified. Authorization and live test have not been completed. The previous production Supabase safety rejection is separate and must not be bypassed.
