@@ -63,16 +63,13 @@ create function hq_private.can_read_learner(p_learner uuid) returns boolean lang
       and ((d.role='child' and d.learner_id=p_learner)
         or (d.role='parent' and exists (select 1 from public.hq_parent_links l where l.parent_id=d.parent_id and l.learner_id=p_learner))))
 $$;
-create function hq_private.can_write_learner(p_learner uuid) returns boolean language sql stable security definer set search_path='' as $$
-  select hq_private.token_valid() and auth.uid() is not null and exists (
-    select 1 from hq_private.device_grants d where d.session_id=hq_private.session_uuid()
-    and d.principal_id=auth.uid() and d.role='child' and d.learner_id=p_learner and d.revoked_at is null)
+-- Either registered family device may append learning events and edit plans.
+-- Authorization still requires a valid JWT, active device and linked learner.
+create function hq_private.can_write_learner(p_learner uuid) returns boolean language sql stable security invoker set search_path='' as $$
+  select hq_private.can_read_learner(p_learner)
 $$;
-create function hq_private.can_edit_plan(p_learner uuid) returns boolean language sql stable security definer set search_path='' as $$
-  select hq_private.token_valid() and auth.uid() is not null and exists (
-    select 1 from hq_private.device_grants d join public.hq_parent_links l on l.parent_id=d.parent_id
-    where d.session_id=hq_private.session_uuid() and d.principal_id=auth.uid()
-      and d.role='parent' and d.revoked_at is null and l.learner_id=p_learner)
+create function hq_private.can_edit_plan(p_learner uuid) returns boolean language sql stable security invoker set search_path='' as $$
+  select hq_private.can_read_learner(p_learner)
 $$;
 revoke all on function hq_private.is_active_parent(uuid), hq_private.can_read_learner(uuid), hq_private.can_write_learner(uuid), hq_private.can_edit_plan(uuid) from public,anon,authenticated;
 grant execute on function hq_private.is_active_parent(uuid), hq_private.can_read_learner(uuid), hq_private.can_write_learner(uuid), hq_private.can_edit_plan(uuid) to authenticated;
@@ -200,10 +197,10 @@ create policy hq_links_device_read on public.hq_parent_links for select to authe
 drop policy hq_child_insert_own_events on public.hq_learning_events;
 drop policy hq_child_and_linked_parent_read on public.hq_learning_events;
 create policy hq_events_device_read on public.hq_learning_events for select to authenticated using (hq_private.can_read_learner(learner_id));
-create policy hq_events_child_write on public.hq_learning_events for insert to authenticated with check (hq_private.can_write_learner(learner_id));
+create policy hq_events_family_write on public.hq_learning_events for insert to authenticated with check (hq_private.can_write_learner(learner_id));
 drop policy hq_plans_read on public.hq_study_plans;
 drop policy hq_plans_add on public.hq_study_plans;
 drop policy hq_plans_edit on public.hq_study_plans;
 create policy hq_plans_device_read on public.hq_study_plans for select to authenticated using (hq_private.can_read_learner(learner_id));
-create policy hq_plans_parent_add on public.hq_study_plans for insert to authenticated with check (hq_private.can_edit_plan(learner_id));
-create policy hq_plans_parent_edit on public.hq_study_plans for update to authenticated using (hq_private.can_edit_plan(learner_id)) with check (hq_private.can_edit_plan(learner_id));
+create policy hq_plans_family_add on public.hq_study_plans for insert to authenticated with check (hq_private.can_edit_plan(learner_id));
+create policy hq_plans_family_edit on public.hq_study_plans for update to authenticated using (hq_private.can_edit_plan(learner_id)) with check (hq_private.can_edit_plan(learner_id));
