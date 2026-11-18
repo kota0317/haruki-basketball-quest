@@ -48,9 +48,10 @@ async function sync(){
   const ids=new Set(Object.keys(kinds).flatMap(k=>s[k].map(x=>x._eventId).filter(Boolean)));
   for(const e of cloudRows){const k=keys[e.event_type];if(k&&!ids.has(e.event_id)){s[k].push({...e.payload,_eventId:e.event_id,_cloudAcknowledged:true});ids.add(e.event_id)}}
   s.answers.sort((a,b)=>(a.time||0)-(b.time||0));persist();await refreshPlans(owner);if(!isCurrent())return;
-  succeeded=true;status('同期済み：'+new Date().toLocaleTimeString('ja-JP'));if(['HOME','RECORD','PLAYER'].includes(tab))render();
+  if(window.HQQuestEvents){if(!s.questData)s.questData={menus:[],completions:{}};await window.HQQuestEvents.sync(()=>s.questData,db,owner,isCurrent,()=>localStorage.setItem(KEY,JSON.stringify(s)),()=>crypto.randomUUID());if(!isCurrent())return;}
+  succeeded=true;s.cloud.lastSyncedAt=new Date().toISOString();localStorage.setItem(KEY,JSON.stringify(s));status('同期済み：'+new Date().toLocaleTimeString('ja-JP')); if(['HOME','RECORD','PLAYER','QUEST'].includes(tab)||(tab==='MANAGE'&&!document.getElementById('quest-form')?.children.length))render();
  }catch(e){status('同期できません。端末に記録を保持しています：'+(e.message||'通信エラー'))}
- finally{busy=false;if(succeeded&&s.cloud?.pending?.length)schedule()}
+ finally{busy=false;if(succeeded&&(s.cloud?.pending?.length||s.questData?.ops?.some(x=>!x.acked)))schedule()}
 }
 async function refreshPlans(id){let session=user?.id,mode=role;let r=await db.from('hq_study_plans').select('*').eq('learner_id',id).order('title');if(r.error)throw r.error;if(!user||user.id!==session||role!==mode)return;plans=r.data; if(s.cloud?.ownerId===id){s.cloud.plans=plans;localStorage.setItem(KEY,JSON.stringify(s))}}
 function targets(kind){const p=(s.cloud?.plans||[]).filter(x=>x.active&&x.subject===kind);return p.length?p.reduce((n,x)=>n+x.target_minutes,0):null}
@@ -103,7 +104,7 @@ async function childSetup(){
  }catch(e){status('端末を登録できません：'+e.message)}
 }
 async function bind(){const id=learner();if(!user||!id)return false;
- if(s.cloud?.ownerId&&s.cloud.ownerId!==device.learner_id){status('この端末の記録は別の学習者に紐付いています。バックアップを保持してください。');return false}
+ if(s.cloud?.ownerId&&s.cloud.ownerId!==id){status('この端末の記録は別の学習者に紐付いています。バックアップを保持してください。');return false}
  if(!s.cloud&&!confirm('この端末の学習記録を承認されたハルキの記録に紐付けます。端末内に元データを残します。よろしいですか？'))return false;
  try{if(!s.cloud){localStorage.setItem(KEY+'-before-cloud',JSON.stringify(s));s.cloud={ownerId:id,pending:[]}}persist();await sync();return true}catch(e){status('移行できません：'+e.message);return false}
 }
@@ -141,7 +142,8 @@ function screen(){let h=`<h2>親子の端末登録</h2><p class="muted">${safe(n
  return card(h)}
 async function logout(){if(role==='child'&&!confirm('ハルキの端末は再登録に保護者の承認が必要です。未送信記録はバックアップしてください。ログアウトしますか？'))return;if(device){let revoked=await db.rpc('hq_revoke_self');if(revoked.error){status('安全にログアウトするため、通信状態を確認してください：'+revoked.error.message);return}}let result=await db.auth.signOut({scope:'local'});if(result.error){status('ログアウトできません：'+result.error.message);return}user=null;device=null;role='';plans=[];rows=[];links=[];invite='';devices=[];parentRequest='';localStorage.removeItem('hq-parent-request');localStorage.removeItem('hq-cloud-role');status('ログアウトしました。端末内の記録は残っています。')}
 async function selectLearner(id){selected=id;await parentRefresh()}
-window.HQCloud={screen,stage,schedule,sync,beginParent,copyApproval,confirmParent,childSetup,bind,parentRefresh,makeInvite,copyInvite,getDevices,revoke,upsertPlan,disablePlan,editPlan,logout,selectLearner,targets,categories,planSummary};
+function info(){return {bound:!!(user&&learner()&&s.cloud?.ownerId===learner()),online:navigator.onLine,lastSyncedAt:s.cloud?.lastSyncedAt||null,pending:(s.cloud?.pending?.length||0)+(s.questData?.ops?.filter(x=>!x.acked).length||0),notice}}
+window.HQCloud={info,screen,stage,schedule,sync,beginParent,copyApproval,confirmParent,childSetup,bind,parentRefresh,makeInvite,copyInvite,getDevices,revoke,upsertPlan,disablePlan,editPlan,logout,selectLearner,targets,categories,planSummary};
 resume().catch(e=>status('端末の確認ができません：'+e.message));
 db.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;device=null;role='';notice='ログアウトしました。端末内の記録は残っています。';if(tab==='SYNC'||tab==='PARENT')render()}else if(session?.user){user=session.user}});
 let reconnecting=false;

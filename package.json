@@ -4,7 +4,7 @@
   "private": true,
   "description": "HARUKI BASKETBALL QUEST",
   "scripts": {
-    "test": "node tests/smoke.cjs && node tests/outbox.mjs && node tests/dashboard.mjs && node tests/owner-client.cjs && node tests/owner-rls.mjs && node tests/legacy-db.mjs && node tests/quest-unit.cjs"
+    "test": "node tests/smoke.cjs && node tests/outbox.mjs && node tests/dashboard.mjs && node tests/owner-client.cjs && node tests/owner-rls.mjs && node tests/legacy-db.mjs && node tests/quest-unit.cjs && node tests/quest-events.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.119.0"
