@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   test:
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'quest-ui-local-release' || github.head_ref == 'quest-release-followup')
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'quest-ui-local-release' || github.head_ref == 'quest-release-followup' || github.head_ref == 'quest-cache-refresh')
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
