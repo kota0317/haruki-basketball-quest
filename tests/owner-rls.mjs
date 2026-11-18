@@ -30,7 +30,7 @@ try{
  await asUser(child,cs);assert.equal((await rows('select * from public.hq_study_plans'))[0].target_minutes,25);assert.equal((await rows(`update public.hq_study_plans set target_minutes=10 where learner_id='${learner}' returning *`)).length,0);
  await asUser(parent,ps);await exec(`select public.hq_revoke_device('${cs}')`);await exec(`select public.hq_issue_device_invite('${pb}','${learner}')`);
  await asUser(child,cs);assert.equal((await rows('select * from public.hq_learning_events')).length,0);await denied(`insert into public.hq_learning_events(learner_id,event_id,event_type,occurred_on,payload) values ('${learner}','20000000-0000-4000-8000-000000000003','answer','2026-11-18','{}')`);
- await asUser(child2,cs2);assert.equal((await rows(`select public.hq_accept_device_invite('${pb}') as id`))[0].id,learner);assert.equal((await rows('select * from public.hq_learning_events')).length,1);
+ await asUser(child2,cs2);assert.equal((await rows(`select public.hq_accept_device_invite('${pb}') as id`))[0].id,learner);assert.equal(learner,child,'initial Auth learner id remains canonical');assert.equal((await rows('select * from public.hq_learning_events')).length,1);
  await asUser(parent,ps);await exec(`select public.hq_issue_device_invite('${pc}','${learner}');select public.hq_revoke_device('${ps}')`);
  await asUser(parent,ps);assert.equal((await rows('select * from public.hq_learning_events')).length,0);await denied(`select public.hq_issue_device_invite('${pa}',null)`);await asUser(stranger,ss);await denied(`select public.hq_accept_device_invite('${pc}')`);
  await asUser(parent2,ps2);let req2=(await rows('select public.hq_request_parent() as id'))[0].id;await exec(`reset role;select hq_private.owner_approve_parent('${req2}');`);
