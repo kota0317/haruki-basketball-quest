@@ -26,6 +26,8 @@ jobs:
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update -qq
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-17
       - name: Take encrypted backup and verify its integrity
         if: steps.config.outputs.ready == 'true'
