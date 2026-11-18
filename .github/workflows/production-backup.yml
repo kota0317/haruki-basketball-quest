@@ -24,7 +24,6 @@ jobs:
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Install PostgreSQL client
-        if: steps.config.outputs.ready == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-client-17
