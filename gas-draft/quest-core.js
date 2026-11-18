@@ -2,7 +2,7 @@
 'use strict';
 const HQSyncCore = (() => {
   const copy = x => JSON.parse(JSON.stringify(x));
-  const idOK = x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(x) && !['__proto__','constructor','prototype'].includes(x);
+  const idOK = x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(x) && !['__proto__','constructor','prototype'].includes(x) && !Object.prototype.hasOwnProperty.call(Object.prototype,x);
   const dateOK = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x+'T00:00:00Z')) && new Date(x+'T00:00:00Z').toISOString().slice(0,10) === x;
   const integer = (x, min, max) => Number.isInteger(x) && x >= min && x <= max;
   const familyCodeFormat = x => typeof x === 'string' && /^[0-9]{5}$/.test(x);
