@@ -1,4 +1,4 @@
--- DRAFT ONLY: Do not apply until reviewed and tested against a dedicated Supabase project.
+-- Applied to the dedicated HARUKI project as migration haruki_initial_events.
 -- Parent/learner links must be created by a trusted project administrator after
 -- verifying both account IDs out of band. No client can create or modify a link.
 create table public.hq_parent_links (
