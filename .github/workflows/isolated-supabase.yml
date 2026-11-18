@@ -1,0 +1,19 @@
+name: Isolated Supabase integration
+on:
+  pull_request:
+    types: [synchronize, opened, reopened]
+permissions:
+  contents: read
+jobs:
+  integration:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'draft/parent-sync'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node tests/live-isolated.cjs
