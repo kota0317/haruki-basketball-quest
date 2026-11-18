@@ -2,6 +2,9 @@
 const assert = require('node:assert/strict');
 const c = require('./quest-core.js');
 let s=c.empty();
+assert.equal(c.familyCodeFormat('00000'),true);
+assert.equal(c.familyCodeFormat('99999'),true);
+for(const code of [0,'1234','123456','１２３４５','12a45']) assert.equal(c.familyCodeFormat(code),false);
 const task={id:'task1',title:'英単語',note:'=1+1',subject:'英語',date:'2026-11-19',repeat:'none',weekdays:[],minutes:20,xp:30,order:1,kind:'英検'};
 const apply=o=>{let out=c.apply(s,o);s=out.state;return out.result};
 const op={id:'op1',deviceId:'parent',type:'task',taskId:'task1',expectedRevision:0,value:task};
