@@ -1,0 +1,18 @@
+name: Isolated minimal family code QA
+on:
+  push:
+    branches: [draft/parent-sync]
+    paths: [tests/live-family.cjs, .github/workflows/family-test.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node tests/live-family.cjs
