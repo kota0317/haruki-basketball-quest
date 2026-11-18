@@ -140,7 +140,13 @@ async function selectLearner(id){selected=id;await parentRefresh()}
 window.HQCloud={screen,stage,schedule,sync,beginParent,copyApproval,confirmParent,childSetup,bind,parentRefresh,makeInvite,copyInvite,getDevices,revoke,upsertPlan,disablePlan,editPlan,logout,selectLearner,targets,categories,planSummary};
 resume().catch(e=>status('端末の確認ができません：'+e.message));
 db.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){user=null;device=null;role='';notice='ログアウトしました。端末内の記録は残っています。';if(tab==='SYNC'||tab==='PARENT')render()}else if(session?.user){user=session.user}});
-window.addEventListener('online',()=>{if(role==='child')sync();else if(role==='parent')parentRefresh()});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&user){if(role==='child')sync();else if(role==='parent')parentRefresh()}});
-setInterval(()=>{if(user&&!document.hidden){if(role==='child')sync();else if(role==='parent')parentRefresh()}},60000);
+let reconnecting=false;
+async function reconnect(){
+ if(!navigator.onLine)return;
+ if(!device){if(reconnecting)return;reconnecting=true;try{await resume()}catch(e){status('端末の確認ができません：'+(e.message||'通信エラー'))}finally{reconnecting=false}return}
+ if(role==='child')await sync();else if(role==='parent')await parentRefresh();
+}
+window.addEventListener('online',reconnect);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)reconnect()});
+setInterval(()=>{if(!document.hidden)reconnect()},60000);
 })();
