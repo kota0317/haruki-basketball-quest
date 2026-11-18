@@ -5,6 +5,7 @@ const HQSyncCore = (() => {
   const idOK = x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(x) && !['__proto__','constructor','prototype'].includes(x);
   const dateOK = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x+'T00:00:00Z')) && new Date(x+'T00:00:00Z').toISOString().slice(0,10) === x;
   const integer = (x, min, max) => Number.isInteger(x) && x >= min && x <= max;
+  const familyCodeFormat = x => typeof x === 'string' && /^[0-9]{5}$/.test(x);
   const text = (x, max) => typeof x === 'string' && x.length <= max;
   const empty = () => ({version: 1, revision: 0, tasks: {}, completions: {}, operations: {}, history: []});
   function validTask(v, key) {
@@ -31,6 +32,6 @@ const HQSyncCore = (() => {
     return {state,result};
   }
   function xp(state) {return Object.values(state.completions).reduce((n,x)=>n+(x.value ? x.value.xp : 0),0)}
-  return {empty,apply,xp};
+  return {empty,apply,xp,familyCodeFormat};
 })();
 if (typeof module !== 'undefined') module.exports = HQSyncCore;
