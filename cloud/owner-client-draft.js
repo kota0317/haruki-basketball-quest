@@ -25,12 +25,13 @@ function stage(input){
  return copy;
 }
 function persist(){s=stage(s);localStorage.setItem(KEY,JSON.stringify(s));}
-function schedule(){if(!user||role!=='child'||s.cloud?.ownerId!==device?.learner_id)return;clearTimeout(timer);timer=setTimeout(sync,700)}
+function learner(){return role==='child'?device?.learner_id:role==='parent'?selected:null}
+function schedule(){if(!user||!learner()||s.cloud?.ownerId!==learner())return;clearTimeout(timer);timer=setTimeout(sync,700)}
 async function allEvents(id){let result=[];for(let offset=0;;offset+=500){let {data,error}=await db.from('hq_learning_events').select('*').eq('learner_id',id).order('created_at',{ascending:true}).order('event_id',{ascending:true}).range(offset,offset+499);if(error)throw error;result.push(...data);if(data.length<500)return result;}}
 async function sync(){
- if(busy||!user||role!=='child'||s.cloud?.ownerId!==device?.learner_id)return;
+ if(busy||!user||!learner()||s.cloud?.ownerId!==learner())return;
  if(!navigator.onLine){status('オフライン：記録はこの端末に保持し、復旧後に再送します。');return}
- const principal=user.id, owner=device.learner_id, session=device.session_id;const isCurrent=()=>user?.id===principal&&device?.session_id===session&&role==='child'&&s.cloud?.ownerId===owner;
+ const principal=user.id, owner=learner(), session=device.session_id;const isCurrent=()=>user?.id===principal&&device?.session_id===session&&learner()===owner&&s.cloud?.ownerId===owner;
  busy=true;let succeeded=false;try{
   persist();
   while(s.cloud.pending.length){
@@ -51,7 +52,7 @@ async function sync(){
  }catch(e){status('同期できません。端末に記録を保持しています：'+(e.message||'通信エラー'))}
  finally{busy=false;if(succeeded&&s.cloud?.pending?.length)schedule()}
 }
-async function refreshPlans(id){let session=user?.id,mode=role;let r=await db.from('hq_study_plans').select('*').eq('learner_id',id).order('title');if(r.error)throw r.error;if(!user||user.id!==session||role!==mode)return;plans=r.data; if(role==='child'&&s.cloud?.ownerId===id){s.cloud.plans=plans;localStorage.setItem(KEY,JSON.stringify(s))}}
+async function refreshPlans(id){let session=user?.id,mode=role;let r=await db.from('hq_study_plans').select('*').eq('learner_id',id).order('title');if(r.error)throw r.error;if(!user||user.id!==session||role!==mode)return;plans=r.data; if(s.cloud?.ownerId===id){s.cloud.plans=plans;localStorage.setItem(KEY,JSON.stringify(s))}}
 function targets(kind){const p=(s.cloud?.plans||[]).filter(x=>x.active&&x.subject===kind);return p.length?p.reduce((n,x)=>n+x.target_minutes,0):null}
 function categories(){let p=(s.cloud?.plans||[]).filter(x=>x.active&&x.subject==='英検');if(!p.length||p.some(x=>x.question_category==='すべて'))return null;return [...new Set(p.map(x=>x.question_category))]}
 function planSummary(){let p=(s.cloud?.plans||[]).filter(x=>x.active);return p.length?card('<h3>保護者と決めた学習メニュー</h3>'+p.map(x=>`<p>${safe(x.subject)}：${safe(x.title)} ${Number(x.target_minutes)}分（${safe(x.question_category)}）</p>`).join('')):''}
@@ -85,8 +86,8 @@ async function resume(){
  let found=await db.rpc('hq_current_device');if(found.error)throw found.error;
  device=found.data?.[0]||null;if(!device){status('この端末はまだ承認されていません。登録を続けてください。');return}
  role=device.role;
- if(role==='parent'){await parentRefresh();if(tab==='HOME')go('PARENT')}
- else if(role==='child'){if(s.cloud?.ownerId===device.learner_id)await sync();if(tab==='PARENT')go('HOME')}
+ if(role==='parent'){await parentRefresh();if(s.cloud?.ownerId===learner())await sync();if(tab==='HOME')go('PARENT')}
+ else if(role==='child'){selected=device.learner_id;if(s.cloud?.ownerId===device.learner_id)await sync();}
  if(tab==='SYNC'||tab==='PARENT')render();
 }
 async function childSetup(){
@@ -98,13 +99,13 @@ async function childSetup(){
   let link=await db.rpc('hq_accept_device_invite',{p_token:code});$('hq-invite').value='';if(link.error){await db.auth.signOut({scope:'local'});user=null;throw link.error}
   let result=await db.rpc('hq_current_device');if(result.error)throw result.error;device=result.data?.[0]||null;
   if(!device||device.role!=='child'||device.learner_id!==link.data)throw Error('端末の承認結果を確認できません');
-  role='child';parentRequest='';localStorage.removeItem('hq-parent-request');status('保護者による端末の承認が完了しました。');if(await bind())go('HOME');
+  role='child';selected=device.learner_id;parentRequest='';localStorage.removeItem('hq-parent-request');status('保護者による端末の承認が完了しました。');if(await bind())go('HOME');
  }catch(e){status('端末を登録できません：'+e.message)}
 }
-async function bind(){if(!user||role!=='child'||!device?.learner_id)return false;
+async function bind(){const id=learner();if(!user||!id)return false;
  if(s.cloud?.ownerId&&s.cloud.ownerId!==device.learner_id){status('この端末の記録は別の学習者に紐付いています。バックアップを保持してください。');return false}
  if(!s.cloud&&!confirm('この端末の学習記録を承認されたハルキの記録に紐付けます。端末内に元データを残します。よろしいですか？'))return false;
- try{if(!s.cloud){localStorage.setItem(KEY+'-before-cloud',JSON.stringify(s));s.cloud={ownerId:device.learner_id,pending:[]}}persist();await sync();return true}catch(e){status('移行できません：'+e.message);return false}
+ try{if(!s.cloud){localStorage.setItem(KEY+'-before-cloud',JSON.stringify(s));s.cloud={ownerId:id,pending:[]}}persist();await sync();return true}catch(e){status('移行できません：'+e.message);return false}
 }
 async function parentRefresh(){if(!user||role!=='parent')return;let parent=user.id,family=device?.parent_id;try{let l=await db.from('hq_parent_links').select('learner_id').eq('parent_id',family);if(user?.id!==parent||role!=='parent')return;if(l.error)throw l.error;links=l.data;if(!links.some(x=>x.learner_id===selected))selected=links[0]?.learner_id||'';if(selected){let result=await allEvents(selected);if(user?.id!==parent||role!=='parent')return;rows=result;await refreshPlans(selected);if(user?.id!==parent||role!=='parent')return}else{rows=[];plans=[]}status(selected?'保護者データを更新しました。':'まだハルキと紐付いていません。招待コードを作成してください。')}catch(e){status('読み込みに失敗しました：'+e.message)}}
 async function makeInvite(){if(!user||role!=='parent'||!device)return;
@@ -119,10 +120,11 @@ async function revoke(session){if(!user||role!=='parent'||!confirm('この端末
  if(device?.session_id===session){await db.auth.signOut({scope:'local'});user=null;device=null;role='';status('この端末のアクセスを停止しました。');return}
  await getDevices();status('端末からのクラウドアクセスを停止しました。')
 }
-async function upsertPlan(id){if(!user||role!=='parent'||!selected)return;let title=$('plan-title').value.trim(),subject=$('plan-subject').value,minutes=Number($('plan-minutes').value),question_category=$('plan-category').value;if(!title||!Number.isInteger(minutes)||minutes<1||minutes>300){status('メニュー名と1〜300分の目標を入力してください。');return}let row={learner_id:selected,plan_id:id||crypto.randomUUID(),title,subject,target_minutes:minutes,question_category,active:true,updated_at:new Date().toISOString()};let r=id?await db.from('hq_study_plans').update(row).eq('learner_id',selected).eq('plan_id',id):await db.from('hq_study_plans').insert(row);if(r.error){status('保存に失敗しました：'+r.error.message);return}await parentRefresh()}
-async function disablePlan(id){if(!confirm('このメニューを終了しますか？'))return;let r=await db.from('hq_study_plans').update({active:false,updated_at:new Date().toISOString()}).eq('learner_id',selected).eq('plan_id',id);if(r.error){status('変更できません：'+r.error.message);return}await parentRefresh()}
+async function upsertPlan(id){if(!user||!learner())return;let title=$('plan-title').value.trim(),subject=$('plan-subject').value,minutes=Number($('plan-minutes').value),question_category=$('plan-category').value;if(!title||!Number.isInteger(minutes)||minutes<1||minutes>300){status('メニュー名と1〜300分の目標を入力してください。');return}let row={learner_id:selected,plan_id:id||crypto.randomUUID(),title,subject,target_minutes:minutes,question_category,active:true,updated_at:new Date().toISOString()};let r=id?await db.from('hq_study_plans').update(row).eq('learner_id',selected).eq('plan_id',id):await db.from('hq_study_plans').insert(row);if(r.error){status('保存に失敗しました：'+r.error.message);return}if(role==='parent')await parentRefresh();else{await refreshPlans(selected);render()}}
+async function disablePlan(id){if(!confirm('このメニューを終了しますか？'))return;let r=await db.from('hq_study_plans').update({active:false,updated_at:new Date().toISOString()}).eq('learner_id',selected).eq('plan_id',id);if(r.error){status('変更できません：'+r.error.message);return}if(role==='parent')await parentRefresh();else{await refreshPlans(selected);render()}}
 function editPlan(id){let p=plans.find(x=>x.plan_id===id);if(!p)return;$('plan-title').value=p.title;$('plan-subject').value=p.subject;$('plan-minutes').value=p.target_minutes;$('plan-category').value=p.question_category;$('plan-save').dataset.id=id;window.scrollTo(0,0)}
 function dashboard(){let days=new Map(),topics=new Map(),last=new Map(),reviews=0,matches=0;let type=new Map(questions.map(q=>[q.id,q.type]));for(const e of rows){let p=e.payload||{};if(e.event_type==='study_session'){let n=Number(p.minutes)||0;days.set(e.occurred_on,(days.get(e.occurred_on)||0)+n)}if(e.event_type==='answer'){if(p.first){let k=type.get(p.id)||'その他',v=topics.get(k)||[0,0];v[1]++;v[0]+=p.correct?1:0;topics.set(k,v)}else reviews++;if(!last.has(p.id)||(p.time||0)>(last.get(p.id).time||0))last.set(p.id,p)}if(e.event_type==='match')matches++}let due=[...last.values()].filter(x=>x.due&&x.due<=today()).length, recentReviews=rows.filter(e=>e.event_type==='answer'&&!e.payload?.first).slice(-10).reverse(), recentMatches=rows.filter(e=>e.event_type==='match').slice(-10).reverse(), date=new Date(today()+'T00:00:00Z'),streak=0;while(days.has(date.toISOString().slice(0,10))&&days.get(date.toISOString().slice(0,10))>0){streak++;date.setUTCDate(date.getUTCDate()-1)}return `<h3>学習状況</h3><p>連続学習 ${streak} 日／復習 ${reviews} 回／復習期限 ${due} 問／試合 ${matches} 回</p><p>模試成績：模試機能は未実装</p><p>分野別・初見正答：${[...topics].map(([k,v])=>`${safe(k)} ${v[0]}/${v[1]} (${Math.round(v[0]*100/v[1])}%)`).join('　')||'記録なし'}</p><h3>直近の復習</h3>${recentReviews.map(e=>`<p>${safe(e.occurred_on)} ${safe(type.get(e.payload.id)||'その他')}：${e.payload.correct?'正解':'不正解'}</p>`).join('')||'<p>記録なし</p>'}<h3>直近の試合</h3>${recentMatches.map(e=>`<p>${safe(e.occurred_on)} ${safe(e.payload.opponent||'練習')} ${Array.isArray(e.payload.score)?e.payload.score.map(Number).join(' − '):''} ${e.payload.full?(e.payload.won?'勝ち':'勝利以外'):''}</p>`).join('')||'<p>記録なし</p>'}<h3>日別学習時間</h3>${[...days].sort(([a],[b])=>b.localeCompare(a)).slice(0,30).map(([d,n])=>`<p>${safe(d)}：${n}分</p>`).join('')||'<p>記録なし</p>'}`}
+function planEditor(){return `<h3>学習メニュー・目標</h3><label>メニュー名 <input id="plan-title" maxlength="120"></label><label>科目 <select id="plan-subject"><option>英検</option><option>学校</option></select></label><label>目標時間 <input id="plan-minutes" type="number" min="1" max="300" value="15"> 分</label><label>問題分野 <select id="plan-category"><option>すべて</option><option>単語</option><option>文法</option><option>読解</option></select></label><button id="plan-save" data-id="" onclick="HQCloud.upsertPlan(this.dataset.id)">メニューを保存</button>${plans.filter(x=>x.active).map(p=>`<div class="box"><strong>${safe(p.title)}</strong> ${safe(p.subject)} ${p.target_minutes}分・${safe(p.question_category)} <button class="secondary" onclick="HQCloud.editPlan('${p.plan_id}')">編集</button> <button class="secondary" onclick="HQCloud.disablePlan('${p.plan_id}')">削除</button></div>`).join('')}`}
 function screen(){let h=`<h2>親子の端末登録</h2><p class="muted">${safe(notice)}</p><button class="secondary" onclick="exportData()">端末内記録をバックアップ</button>`;
  if(!device){h+=`<p>保護者の初回登録は、ご自身のSupabase管理画面でこの端末の要求を承認します。ハルキは保護者の招待コードで登録します。</p><button onclick="HQCloud.beginParent()">保護者：端末の登録要求を作成</button>`;
   if(parentRequest)h+=`<p>要求ID（秘密のパスワードではありません）：<code style="overflow-wrap:anywhere">${safe(parentRequest)}</code></p><p>管理画面のSQL Editorで次の操作を実行してください。必ずこの端末で作成した要求であることを確認してください。</p><code style="overflow-wrap:anywhere">select hq_private.owner_approve_parent('${safe(parentRequest)}'::uuid);</code><p><button class="secondary" onclick="HQCloud.copyApproval()">承認用SQLをコピー</button> <a href="https://supabase.com/dashboard/project/whgmaavoekefzihhssld/sql" target="_blank" rel="noopener">SupabaseのSQL Editorを開く</a></p><button onclick="HQCloud.confirmParent()">承認を確認する</button>`;
@@ -131,8 +133,10 @@ function screen(){let h=`<h2>親子の端末登録</h2><p class="muted">${safe(n
   return card(h)}
  h+=`<p>${role==='parent'?'保護者':'ハルキ'}の登録端末</p><button class="secondary" onclick="HQCloud.logout()">この端末からログアウト</button>`;
  if(role==='child')h+=`<p>${s.cloud?.ownerId===device.learner_id?'この端末の記録は同期対象':'この端末の記録はまだ移行していません'}</p><button onclick="HQCloud.bind()">端末内の記録を紐付ける</button> <button class="secondary" onclick="HQCloud.sync()">今すぐ同期</button><p class="muted">ブラウザのデータを消すと再登録が必要です。未送信記録はバックアップしてください。</p>`;
+ if(role==='child'&&selected)h+=planEditor();
+ if(role==='parent'&&selected)h+=`<p><button onclick="HQCloud.bind()">この端末の記録を同期する</button> <button class="secondary" onclick="HQCloud.sync()">今すぐ同期</button></p>`;
  if(role==='parent'){h+=`<p><button onclick="HQCloud.makeInvite()">招待コードを作成</button> <button class="secondary" onclick="HQCloud.parentRefresh()">最新情報に更新</button></p>${invite?`<p>15分以内にハルキの画面へ入力：<br><code style="overflow-wrap:anywhere">${safe(invite)}</code><br><button class="secondary" onclick="HQCloud.copyInvite()">コードをコピー</button></p>`:''}`;
- if(selected)h+=`<label>学習者 <select onchange="HQCloud.selectLearner(this.value)">${links.map((x,i)=>`<option value="${safe(x.learner_id)}" ${selected===x.learner_id?'selected':''}>学習者 ${i+1}</option>`).join('')}</select></label><p><button class="secondary" onclick="HQCloud.getDevices()">登録端末を表示</button></p>${devices.map(d=>`<div class="box">${d.role==='parent'?'保護者端末':'ハルキ端末'} ${safe(d.created_at)} ${d.revoked_at?'停止済み':`<button class="secondary" onclick="HQCloud.revoke('${d.session_id}')">停止</button>`}</div>`).join('')}<h3>学習メニュー・目標</h3><label>メニュー名 <input id="plan-title" maxlength="120"></label><label>科目 <select id="plan-subject"><option>英検</option><option>学校</option></select></label><label>目標時間 <input id="plan-minutes" type="number" min="1" max="300" value="15"> 分</label><label>問題分野 <select id="plan-category"><option>すべて</option><option>単語</option><option>文法</option><option>読解</option></select></label><button id="plan-save" data-id="" onclick="HQCloud.upsertPlan(this.dataset.id)">メニューを保存</button>${plans.filter(x=>x.active).map(p=>`<div class="box"><strong>${safe(p.title)}</strong> ${safe(p.subject)} ${p.target_minutes}分・${safe(p.question_category)} <button class="secondary" onclick="HQCloud.editPlan('${p.plan_id}')">編集</button> <button class="secondary" onclick="HQCloud.disablePlan('${p.plan_id}')">削除</button></div>`).join('')}${dashboard()}`;
+ if(selected)h+=`<label>学習者 <select onchange="HQCloud.selectLearner(this.value)">${links.map((x,i)=>`<option value="${safe(x.learner_id)}" ${selected===x.learner_id?'selected':''}>学習者 ${i+1}</option>`).join('')}</select></label><p><button class="secondary" onclick="HQCloud.getDevices()">登録端末を表示</button></p>${devices.map(d=>`<div class="box">${d.role==='parent'?'保護者端末':'ハルキ端末'} ${safe(d.created_at)} ${d.revoked_at?'停止済み':`<button class="secondary" onclick="HQCloud.revoke('${d.session_id}')">停止</button>`}</div>`).join('')}${planEditor()}${dashboard()}`;
  }
  return card(h)}
 async function logout(){if(role==='child'&&!confirm('ハルキの端末は再登録に保護者の承認が必要です。未送信記録はバックアップしてください。ログアウトしますか？'))return;if(device){let revoked=await db.rpc('hq_revoke_self');if(revoked.error){status('安全にログアウトするため、通信状態を確認してください：'+revoked.error.message);return}}let result=await db.auth.signOut({scope:'local'});if(result.error){status('ログアウトできません：'+result.error.message);return}user=null;device=null;role='';plans=[];rows=[];links=[];invite='';devices=[];parentRequest='';localStorage.removeItem('hq-parent-request');localStorage.removeItem('hq-cloud-role');status('ログアウトしました。端末内の記録は残っています。')}
@@ -144,7 +148,7 @@ let reconnecting=false;
 async function reconnect(){
  if(!navigator.onLine)return;
  if(!device){if(reconnecting)return;reconnecting=true;try{await resume()}catch(e){status('端末の確認ができません：'+(e.message||'通信エラー'))}finally{reconnecting=false}return}
- if(role==='child')await sync();else if(role==='parent')await parentRefresh();
+ if(role==='parent')await parentRefresh();if(learner()&&s.cloud?.ownerId===learner())await sync();
 }
 window.addEventListener('online',reconnect);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)reconnect()});
