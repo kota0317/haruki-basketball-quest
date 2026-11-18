@@ -48,7 +48,7 @@ async function sync(){
   const ids=new Set(Object.keys(kinds).flatMap(k=>s[k].map(x=>x._eventId).filter(Boolean)));
   for(const e of cloudRows){const k=keys[e.event_type];if(k&&!ids.has(e.event_id)){s[k].push({...e.payload,_eventId:e.event_id,_cloudAcknowledged:true});ids.add(e.event_id)}}
   s.answers.sort((a,b)=>(a.time||0)-(b.time||0));persist();await refreshPlans(owner);if(!isCurrent())return;
-  succeeded=true;status('同期済み：'+new Date().toLocaleTimeString('ja-JP'));
+  succeeded=true;status('同期済み：'+new Date().toLocaleTimeString('ja-JP'));if(['HOME','RECORD','PLAYER'].includes(tab))render();
  }catch(e){status('同期できません。端末に記録を保持しています：'+(e.message||'通信エラー'))}
  finally{busy=false;if(succeeded&&s.cloud?.pending?.length)schedule()}
 }
