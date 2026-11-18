@@ -17,8 +17,12 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm install --no-save --ignore-scripts playwright-core
-      - run: mkdir -p qa && python3 -m http.server 8792 --bind 127.0.0.1 > /tmp/quest-http.log 2>&1 &
-      - run: node tests/quest-browser.cjs
+      - run: |
+          mkdir -p qa
+          python3 -m http.server 8792 --bind 127.0.0.1 > /tmp/quest-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid' EXIT
+          node tests/quest-browser.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
