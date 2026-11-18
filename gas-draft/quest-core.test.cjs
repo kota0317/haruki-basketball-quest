@@ -22,4 +22,8 @@ assert.equal(apply({...done,id:'op5',expectedRevision:completed.revision,value:n
 assert.equal(c.xp(s),0); assert.equal(s.history.length,3);
 assert.equal(apply({...op,id:'__proto__'}).status,'invalid');
 assert.equal(apply({...done,id:'bad',date:'2026-02-30'}).status,'invalid');
+for (const key of ['toString','valueOf','hasOwnProperty']) {
+  assert.equal(apply({...op,id:key}).status,'invalid');
+  assert.equal(apply({...op,id:'safe_'+key,taskId:key,value:{...task,id:key}}).status,'invalid');
+}
 console.log('PASS isolated model: duplicates, conflicts, completion/undo and XP');
