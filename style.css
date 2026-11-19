@@ -24,3 +24,25 @@ button{min-height:44px}button:focus-visible{outline:3px solid #ffe36c;outline-of
 .rpg-spin .rpg-stage-player{background-image:url("assets/haruki-spin.webp");animation:rpg-frames 3s steps(1) infinite}
 .rpg-alley .rpg-stage-player{background-image:url("assets/haruki-alley.webp");animation:rpg-frames 3s steps(1) infinite}
 .rpg-failure .rpg-stage-player,.rpg-overlay.simple .rpg-stage-player{animation:none;background-position:0 0}
+/* Match introduction: portrait video keeps its original proportions. */
+.match-opening{position:fixed;inset:0;z-index:2000;background:radial-gradient(ellipse at center,#132e58,#030712 75%);display:grid;place-items:center;overflow:hidden}
+.opening-stage{position:relative;width:100%;height:100%;display:grid;place-items:center;overflow:hidden}
+.opening-video{display:block;width:100%;height:100%;object-fit:contain}
+.opening-loading{position:absolute;bottom:16%;color:#fff;text-shadow:0 0 15px #46d7ff;font-weight:800}
+.opening-loading[hidden]{display:none}
+.opening-skip{position:absolute;right:max(16px,env(safe-area-inset-right));top:max(16px,env(safe-area-inset-top));z-index:3;min-width:80px;background:#081122d9;color:white;border:1px solid #9ce8ff}
+.opening-card{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(12px,4vh,30px);padding:24px;opacity:0;pointer-events:none;background:radial-gradient(ellipse at 50% 40%,#194473ee,#040a1a 73%);transition:opacity .28s ease;color:white;text-align:center;overflow:hidden}
+.opening-card.visible{opacity:1}
+.opening-stars{position:absolute;inset:0;opacity:.65;background:radial-gradient(circle at 20% 20%,#bbf5ff 0 1px,transparent 3px),radial-gradient(circle at 75% 30%,#38b8ff 0 2px,transparent 4px),radial-gradient(circle at 35% 70%,#fff 0 1px,transparent 3px),radial-gradient(circle at 85% 75%,#62d5ff 0 2px,transparent 4px);background-size:130px 170px;animation:opening-drift 4s linear infinite}
+.opening-haruki,.opening-vs,.opening-team{position:relative;font-weight:900;line-height:1.15;max-width:100%;text-shadow:0 0 12px #a3f8ff,0 0 28px #069dff}
+.opening-haruki{font-size:clamp(36px,12vw,80px)}
+.opening-vs{font-size:clamp(48px,15vw,100px);color:#ffb546;text-shadow:0 0 15px #ff8e28}
+.opening-team{font-size:clamp(24px,8vw,52px);overflow-wrap:anywhere}
+.opening-team.long{font-size:clamp(20px,6vw,38px)}
+.opening-card.visible .opening-haruki{animation:opening-appear .5s both}
+.opening-card.visible .opening-vs{animation:opening-appear .45s .18s both}
+.opening-card.visible .opening-team{animation:opening-rise .5s .35s both}
+@keyframes opening-appear{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:scale(1)}}
+@keyframes opening-rise{from{opacity:0;transform:translateY(25px)}to{opacity:1;transform:translateY(0)}}
+@keyframes opening-drift{to{transform:translateY(-35px)}}
+@media(prefers-reduced-motion:reduce){.opening-card *{animation:none!important}.opening-card{transition:none}}
