@@ -2,7 +2,7 @@ const {chromium}=require('playwright-core');
 const assert=require('node:assert/strict');
 (async()=>{const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'/usr/bin/google-chrome',args:['--no-sandbox']});try{
  const p=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true}); const errors=[];p.on('pageerror',e=>errors.push(e.message));
- await p.goto('http://127.0.0.1:8792/');await p.evaluate(()=>navigator.serviceWorker.ready);await p.reload();
+ await p.goto('http://127.0.0.1:8792/');await p.evaluate(()=>navigator.serviceWorker.ready);await p.reload();await p.addStyleTag({url:'http://127.0.0.1:8792/node_modules/@fontsource/noto-sans-jp/index.css'});await p.addStyleTag({content:'body{font-family:"Noto Sans JP",sans-serif!important}'});await p.evaluate(()=>document.fonts.ready);
  await p.evaluate(()=>{s.sessions=[{date:today(),kind:'英検',minutes:60},{date:today(),kind:'学校',minutes:60}];save();dailyTeams=()=>opponents.map((_,i)=>i)});
  for(const team of ['福岡第一','東山','福岡大学附属大濠']){
   await p.evaluate(name=>{let i=opponents.findIndex(x=>x.name===name);if(i<0)throw Error('missing '+name);startMatch(i)},team);
