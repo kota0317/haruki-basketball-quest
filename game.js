@@ -46,13 +46,14 @@ if(match&&match.finished)return card(`<div class="label">FINAL SCORE</div><h2>${
 let wins=s.matches.filter(x=>x.full&&x.won&&x.level===0).length;
 return card(`<h2>今日の対戦相手</h2><p>${unlocked()?'🏀 試合解放！':'🔒 今日のメニューと英検・学校の目標達成で解放'}</p><p class="muted">国内から挑戦。国内で3勝するとNBAに挑戦できます。選手名は歴史上の所属を参考にした演出で、現役登録を示すものではありません。</p>${dailyTeams().map(i=>{let t=opponents[i],locked=!unlocked()||(t.level===1&&wins<3);return `<div class="box" style="margin:8px 0"><strong>${esc(t.name)}</strong> ${'★'.repeat(t.star)}<br>${t.category?`<small>${esc(t.category)}</small><br>`:''}<small>${t.offense?'ゲーム上の特徴':'注目選手'}：${esc(t.player)}${t.level&&wins<3?'・国内3勝で解放':''}</small><p><button ${locked?'disabled':''} onclick="startMatch(${i})">挑戦する</button></p></div>`}).join('')}<p class="muted">毎日、全中男子・ウインターカップ男子から各1チーム以上が登場します。強さ・戦術はゲーム上の架空設定です。公式ロゴやユニフォームは使用していません。</p><details><summary>登録済みの学校一覧を見る</summary>${['全中男子','ウインターカップ男子'].map(group=>`<h3>${group}</h3><p>${opponents.filter(t=>t.category===group&&t.school2026).map(t=>esc(t.name)).join('、')}</p>`).join('')}</details>`)}
 function startMatch(i){let t=opponents[i];if(!t||!dailyTeams().includes(i)||!unlocked()||(t.level===1&&s.matches.filter(x=>x.full&&x.won&&x.level===0).length<3))return;match={team:t,turn:0,us:0,them:0,last:'ティップオフ！ハルキがゴール下に入った。',finished:false};s.activeMatch=match;save();render()}
-function possession(style){if(!match||match.finished||!['post','screen','defense'].includes(style))return;
+function possession(style){if(!match||match.finished||!['post','screen','defense','three'].includes(style))return;
  let m=match,lvl=level(),ability=Math.min(.16,(lvl-1)*.008),strength=(m.team.star-3)*.06,rand=Math.random;
- let matchup=(m.team.defense==='リバウンド'&&style==='post')?-.03:(m.team.defense==='プレッシャー'&&style==='screen')?-.03:0;let chance=Math.max(.25,Math.min(.82,.55+ability-strength+matchup+({post:.02,screen:.07,defense:-.04}[style])));
- let shot=rand()<chance,defend=rand()<Math.max(.2,Math.min(.8,.43+ability-strength+(m.team.offense==='速攻'&&style!=='defense'?-.03:0)+({post:0,screen:-.02,defense:.17}[style])));
+ let matchup=(m.team.defense==='リバウンド'&&style==='post')?-.03:(m.team.defense==='プレッシャー'&&style==='screen')?-.03:0;let chance=Math.max(.25,Math.min(.82,.55+ability-strength+matchup+({post:.02,screen:.07,defense:-.04,three:-.06}[style])));
+ let shot=rand()<chance,defend=rand()<Math.max(.2,Math.min(.8,.43+ability-strength+(m.team.offense==='速攻'&&style!=='defense'?-.03:0)+({post:0,screen:-.02,defense:.17,three:-.03}[style])));
  let text='';if(style==='post')text=shot?'ポストで受けてゴール下シュート成功！':'ポストシュートは惜しくも外れた。';
  if(style==='screen')text=shot?'ハルキのスクリーンから味方がシュート！':'スクリーンからのシュートは外れた。';
  if(style==='defense')text=shot?'攻撃では味方が得点！':'攻撃は無得点。';
- if(shot)m.us+=2;
+ if(style==='three')text=shot?'3ポイントシュート成功！':'3ポイントシュートは外れた。';
+ if(shot)m.us+=style==='three'?3:2;
  if(defend){text+=rand()<.5?' ハルキがブロック！':' ハルキがリバウンドを確保！'}else{let enemyScores=rand()<.7;if(enemyScores){m.them+=2;text+=' 相手も得点。'}else text+=' 相手のシュートは外れた。'}
  m.turn++;m.last=text;if(m.turn>=8){m.finished=true;s.matches.push({date:today(),full:true,opponent:m.team.name,level:m.team.level,score:[m.us,m.them],won:m.us>m.them})}s.activeMatch=m;save();render()}
