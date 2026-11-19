@@ -24,3 +24,10 @@ jobs:
           CHROME_PATH=/usr/bin/google-chrome node tests/experience-browser.cjs
           CHROME_PATH=/usr/bin/google-chrome node tests/rpg-browser.cjs
           CHROME_PATH=/usr/bin/google-chrome node tests/opening-browser.cjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opening-screenshots
+          path: qa/*.png
+          if-no-files-found: ignore
