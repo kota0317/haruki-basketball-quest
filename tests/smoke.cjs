@@ -4,6 +4,8 @@ class FakeDate extends Date {constructor(...x){super(...(x.length?x:[clock]))}st
 let store={},elements={};const el=id=>elements[id]??={innerHTML:'',value:'',checked:false};
 let context={Date:FakeDate,Intl,console,Math,JSON,Blob,localStorage:{getItem:k=>store[k]??null,setItem:(k,v)=>store[k]=v},setInterval(){},document:{getElementById:el,createElement:()=>({click(){}}),addEventListener(){}},window:{scrollTo(){}},alert(){},confirm(){return false},prompt(){return null},URL:{createObjectURL(){},revokeObjectURL(){}}};vm.createContext(context);
 vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../game.js'),'utf8'),context);
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../eiken-words.js'),'utf8'),context);
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../eiken.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../app.js'),'utf8'),context);
 function run(x){return vm.runInContext(x,context)}
 assert.equal(run('today()'),'2026-11-18');
