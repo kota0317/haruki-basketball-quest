@@ -1,0 +1,18 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+let clock=Date.parse('2026-11-20T03:00:00Z');class FakeDate extends Date{constructor(...x){super(...(x.length?x:[clock]))}static now(){return clock}}
+let store={},elements={};const element=id=>elements[id]??={innerHTML:'',value:'',checked:false,insertAdjacentHTML(){},scrollIntoView(){}};
+const ctx={Date:FakeDate,Intl,Math,console,JSON,Blob,URL:{createObjectURL(){},revokeObjectURL(){}},localStorage:{getItem:k=>store[k]??null,setItem:(k,v)=>store[k]=v},setInterval(){},setTimeout(){},alert(){},confirm:()=>true,document:{getElementById:element,createElement:()=>({click(){}}),addEventListener(){}},window:{scrollTo(){},matchMedia:()=>({matches:false})}};vm.createContext(ctx);
+for(const file of ['game.js','eiken-words.js','eiken.js','app.js','quest-ui.js','reading.js','experience.js'])vm.runInContext(fs.readFileSync(file,'utf8'),ctx,{filename:file});const run=s=>vm.runInContext(s,ctx);
+assert.equal(run('playerAbility()'),10);assert.equal(run('READINGS.length'),12);assert.ok(run('READINGS.every(x=>{let n=x.en.trim().split(/\\s+/).length;return n>=90&&n<=110&&new Set([x.correct,...x.wrong]).size===4})'));
+run("startDrill('words')");assert.equal(run('ekDay().words.original.length'),20);assert.equal(run('ekDay().words.original.filter(x=>x.startsWith(\"enjp:\")).length'),10);
+// Pick balls out of order, miss the first, then clear the retry queue.
+run('chooseBall(19);answerBall((drillCurrent.options.indexOf(drillCurrent.correct)+1)%3);showCourt()');assert.equal(run('ekDay().words.retry.length'),1);assert.equal(run('ekDay().words.original[19]'),run('ekDay().words.doneRefs[0]'));
+for(let i=0;i<19;i++)run('chooseBall(ekDay().words.original.findIndex(x=>!ekDay().words.doneRefs.includes(x)));answerBall(drillCurrent.options.indexOf(drillCurrent.correct));showCourt()');
+assert.equal(run('ekDay().words.phase'),'retry');assert.equal(run('ekDay().words.retry.length'),1);run('chooseBall(ekDay().words.original.indexOf(ekDay().words.retry[0]));answerBall(drillCurrent.options.indexOf(drillCurrent.correct));showCourt()');assert.equal(run('ekDay().words.complete'),true);
+for(const type of ['sentence','dialogue']){run(`startDrill('${type}')`);assert.equal(run(`ekDay().${type}.original.length`),5);for(let i=0;i<5;i++)run(`answerPass(drillCurrent.options.indexOf(drillCurrent.correct));showPass('${type}')`);assert.equal(run(`ekDay().${type}.complete`),true)}
+run('openReading()');let id=run('readingDay().id');run('readingAnswer(readCurrent.answers.indexOf(READINGS[readCurrent.id].correct))');assert.equal(run('readingDay().complete'),true);assert.equal(run('readingDay().id'),id);
+assert.equal(run('opponents.filter(x=>x.offense).length'),15);assert.equal(run('s.learningEvents.filter(e=>e.type===\"enjp\"||e.type===\"jpen\").length'),21);
+let saved=JSON.parse(store['haruki-quest-prototype-v1']);assert.equal(saved.eikenDaily.days['2026-11-20'].words.complete,true);run('s=load()');assert.equal(run('ekDay().words.complete'),true);assert.equal(run('readingDay().id'),id);
+// Restore legacy account without a baseline marker; calculate the same old ability.
+run("s={sessions:[{date:today(),kind:'学校',minutes:120}],answers:[{id:'v1',correct:true}],matches:[{opponent:'old'}],settings:{club:true},questData:{menus:[],completions:{}}};save()");assert.equal(run('playerAbility()'),42);run("startDrill('sentence')");assert.equal(run('s.answers.length'),1);assert.equal(run('s.matches[0].opponent'),'old');assert.equal(run('s.sessions.length'),1);
+console.log('PASS experience: reading length, ball selection/retries, two drills, persistence, legacy preservation and school list');
