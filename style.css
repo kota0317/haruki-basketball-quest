@@ -18,3 +18,9 @@ button{min-height:44px}button:focus-visible{outline:3px solid #ffe36c;outline-of
 .rpg-steal .rpg-stage-player{animation:rpg-player 1s ease-in-out infinite;background-position:50% 0}.rpg-steal .rpg-ball{animation:rpg-blockball 1s ease-in-out infinite}
 .rpg-xp{display:inline-block;color:#ffe068;background:#46350f;border-radius:9px;padding:6px 12px;font-weight:900}.rpg-xp-pulse{animation:rpg-title .4s ease-out}
 .rpg-overlay-actions{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}.rpg-overlay-actions button{min-width:120px}
+
+/* Dedicated six-frame skill artwork; failed plays never show a made basket. */
+.rpg-three .rpg-stage-player{background-image:url("assets/haruki-three.webp");animation:rpg-frames 3s steps(1) infinite}
+.rpg-spin .rpg-stage-player{background-image:url("assets/haruki-spin.webp");animation:rpg-frames 3s steps(1) infinite}
+.rpg-alley .rpg-stage-player{background-image:url("assets/haruki-alley.webp");animation:rpg-frames 3s steps(1) infinite}
+.rpg-failure .rpg-stage-player,.rpg-overlay.simple .rpg-stage-player{animation:none;background-position:0 0}
