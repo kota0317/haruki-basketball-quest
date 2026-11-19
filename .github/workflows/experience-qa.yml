@@ -23,13 +23,6 @@ jobs:
           trap 'kill $server_pid' EXIT
           CHROME_PATH=/usr/bin/google-chrome node tests/experience-browser.cjs
           CHROME_PATH=/usr/bin/google-chrome node tests/rpg-browser.cjs
-      - name: Verify live YouTube embed availability
-        continue-on-error: true
-        run: |
-          python3 -m http.server 8792 --bind 127.0.0.1 > /tmp/haruki-youtube.log 2>&1 &
-          server_pid=$!
-          trap 'kill $server_pid' EXIT
-          CHROME_PATH=/usr/bin/google-chrome node tests/youtube-embed-check.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
