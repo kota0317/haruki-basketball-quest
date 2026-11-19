@@ -27,7 +27,7 @@ const questions=[
 {id:'g11',type:'文法',q:'This is the book ___ I bought yesterday.',choices:['which','who','where'],a:0,ex:'物を説明する関係代名詞 which を使います。'}];
 const tabs=['HOME','EIKEN','STUDY','MATCH','PLAYER','RECORD','PARENT'];
 function today(){return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}
-const emptyState=()=>({sessions:[],answers:[],matches:[],settings:{club:true,exam:false}});
+const emptyState=()=>({sessions:[],answers:[],matches:[],settings:{club:true,exam:false},abilityBaseline:10});
 function validState(x){return !!x&&typeof x==='object'&&!Array.isArray(x)&&Array.isArray(x.sessions)&&Array.isArray(x.answers)&&Array.isArray(x.matches)&&!!x.settings&&typeof x.settings==='object'&&!Array.isArray(x.settings)&&(!x.questData||(Array.isArray(x.questData.menus)&&x.questData.completions&&typeof x.questData.completions==='object'&&!Array.isArray(x.questData.completions)))}
 let storageBlocked=false;
 function load(){try{let raw=localStorage.getItem(KEY);if(raw===null)return emptyState();let data=JSON.parse(raw);if(!validState(data))throw Error('invalid');return data}catch{storageBlocked=true;alert('保存済みデータを読み込めません。元のデータは残しています。バックアップから復元してください。');return emptyState()}}
