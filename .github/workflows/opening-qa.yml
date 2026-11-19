@@ -1,0 +1,33 @@
+name: Match opening QA
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  test:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'work/match-opening-video'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node tests/smoke.cjs && node tests/quest-unit.cjs && node tests/experience-unit.cjs && node tests/rpg-unit.cjs
+      - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core @fontsource/noto-sans-jp
+      - run: |
+          mkdir -p qa
+          python3 -m http.server 8792 --bind 127.0.0.1 > /tmp/haruki-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid' EXIT
+          CHROME_PATH=/usr/bin/google-chrome node tests/experience-browser.cjs
+          CHROME_PATH=/usr/bin/google-chrome node tests/rpg-browser.cjs
+          CHROME_PATH=/usr/bin/google-chrome node tests/opening-browser.cjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opening-screenshots
+          path: qa/*.png
+          if-no-files-found: ignore
