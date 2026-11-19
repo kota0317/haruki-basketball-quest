@@ -55,5 +55,5 @@ function possession(style){if(!match||match.finished||!['post','screen','defense
  if(style==='defense')text=shot?'攻撃では味方が得点！':'攻撃は無得点。';
  if(style==='three')text=shot?'3ポイントシュート成功！':'3ポイントシュートは外れた。';
  if(shot)m.us+=style==='three'?3:2;
- if(defend){text+=rand()<.5?' ハルキがブロック！':' ハルキがリバウンドを確保！'}else{let enemyScores=rand()<.7;if(enemyScores){m.them+=2;text+=' 相手も得点。'}else text+=' 相手のシュートは外れた。'}
+ if(defend){let defensePlay=rand();text+=defensePlay<.34?' ハルキがブロック！':defensePlay<.67?' ハルキがリバウンドを確保！':' ハルキがスティール成功！'}else{let enemyScores=rand()<.7;if(enemyScores){m.them+=2;text+=' 相手も得点。'}else text+=' 相手のシュートは外れた。'}
  m.turn++;m.last=text;if(m.turn>=8){m.finished=true;s.matches.push({date:today(),full:true,opponent:m.team.name,level:m.team.level,score:[m.us,m.them],won:m.us>m.them})}s.activeMatch=m;save();render()}
