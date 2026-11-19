@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   test:
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'work/ability-baseline-current' || github.head_ref == 'work/sunday-review-fix' || github.head_ref == 'work/zenchu-ability')
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'work/ability-baseline-current' || github.head_ref == 'work/sunday-review-fix' || github.head_ref == 'work/zenchu-ability' || github.head_ref == 'work/haruki-rpg')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node tests/smoke.cjs && node tests/quest-unit.cjs && node tests/experience-unit.cjs
+      - run: node tests/smoke.cjs && node tests/quest-unit.cjs && node tests/experience-unit.cjs && node tests/rpg-unit.cjs
       - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core @fontsource/noto-sans-jp
       - run: |
           mkdir -p qa
@@ -22,6 +22,7 @@ jobs:
           server_pid=$!
           trap 'kill $server_pid' EXIT
           CHROME_PATH=/usr/bin/google-chrome node tests/experience-browser.cjs
+          CHROME_PATH=/usr/bin/google-chrome node tests/rpg-browser.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
