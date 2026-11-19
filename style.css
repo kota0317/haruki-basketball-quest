@@ -46,3 +46,6 @@ button{min-height:44px}button:focus-visible{outline:3px solid #ffe36c;outline-of
 @keyframes opening-rise{from{opacity:0;transform:translateY(25px)}to{opacity:1;transform:translateY(0)}}
 @keyframes opening-drift{to{transform:translateY(-35px)}}
 @media(prefers-reduced-motion:reduce){.opening-card *{animation:none!important}.opening-card{transition:none}}
+
+/* Clear entry to the study plan on the quest screen. */
+.quest-add-card{border:2px solid #ffac52;background:linear-gradient(125deg,#26344b,#69401f);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;box-shadow:0 0 18px #f58d2520}.quest-add-card h3{margin:5px 0;color:#fff;font-size:20px}.quest-add-card p{margin:0;color:#ffe3c4;font-size:14px}.quest-add-card button{min-height:48px;background:#ff9b37;color:#142035;font-size:15px;flex:1 1 190px}.english-question{line-height:1.65}
