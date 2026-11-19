@@ -47,6 +47,8 @@ const CLOZE = [
 ['A: I am sorry I am late. B: ___.','That is OK','You are a teacher','It is a book','謝罪への返答として「大丈夫です」。'],
 ['A: How often do you practice? B: ___.','Three times a week','For three hours','Three kilometers','頻度を尋ねる How often には回数で答えます。']
 ].map((v,i)=>({id:i+1,q:v[0],choices:v.slice(1,4),ex:v[4]}));
+const CLOZE_FOURTH=['if','staying','as','to','from','for','is','reads','uses','whose','when','went','cleaning','be','from','on','gets','closed','or','with','much','often','each','under','between','in','comes','thanks','is','Good night','at home','With my brother','Of','does','On Monday','At school','I am a ball','my','quickly','Excuse me','I am a book','She has a pen','My favorite is blue','I like apples','At the gym'];
+CLOZE.forEach((q,i)=>q.choices.push(CLOZE_FOURTH[i]));
 const shuffle=a=>{a=[...a];for(let i=a.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 function ekState(){return s.eikenDaily ||= {days:{}}}
 function ekDay(){let days=ekState().days;return days[today()] ||= {}}
