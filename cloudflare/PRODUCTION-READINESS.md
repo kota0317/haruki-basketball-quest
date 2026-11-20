@@ -2,51 +2,42 @@
 
 更新日: 2026-11-20
 
-## 公開方針と実データ保護
+## 公開状況
 
-ユーザー確認により、現在のハルキ本番アプリには保護対象の学習記録がありません。実端末JSONバックアップの取得、隔離復元、既存学習履歴の移行は、今回の本番公開・初回同期の前提条件から除外します。JSONバックアップ・復元機能は今後のために維持します。
+- GitHub Pages: [HARUKI BASKETBALL QUEST](https://kota0317.github.io/haruki-basketball-quest/)。公開ページをブラウザで確認済み。
+- PR #15 は main へマージ済み（merge commit `e03685a7215b92ad14b438d13f62effd5127ecb7`）。
+- 本番Worker: `haruki-production-inactive-44733572133`。
+- 本番API: `https://haruki-production-inactive-44733572133.schef07apremium-c.workers.dev`。
+- 再利用D1: `haruki-sync-qa-44663546163` / UUID `31dc86e4-3cc5-42dc-a738-5a9a6259747f`。
+- GitHub Environment `haruki-production` の `HARUKI_FAMILY_CODE` は本番Worker secretとして設定済み。デプロイworkflowの形式検証と認証付きGETを通過。[本番Workerデプロイ](https://github.com/kota0317/haruki-basketball-quest/actions/runs/44741067054)
+- D1はデプロイ前後の直接読取で `revision=0 / body=NULL`。本番初回同期データはまだ投入していない。
+- 本番デプロイに追加課金や既存D1の削除・初期化は行っていない。D1棚卸しは [D1-INVENTORY-2026-11-20.md](D1-INVENTORY-2026-11-20.md)。
 
-公開前のWorker検証ではD1の `family_snapshot` が `revision=0 / body=NULL` であることを再確認します。端末の初回同期時、クラウドが空で端末にも学習記録がないことを確認できれば空の状態から開始します。端末に想定外の記録がある場合、空のクラウドへ自動送信せず同期を停止します。双方に記録がある初回接続は従来どおり比較・競合解決を行います。
+## データと初回同期の安全性
 
-既存端末の記録を初期化・削除する処理は行いません。公開後に記録を追加した後は、必要に応じてJSONバックアップを使います。
+ユーザー確認により、現時点のハルキ本番アプリに保護対象の学習記録はありません。実端末JSONバックアップの取得、隔離復元、既存履歴の移行は今回の公開条件から除外しました。JSONバックアップ・復元機能は今後のために維持します。
 
-## Cloudflare
+アプリは学習メニュー・履歴・XP/レベル・英検・ゲーム進捗を端末内に保存し、同じ家族コードでWorkers＋D1に同期します。空のD1と、記録のない新規端末なら空の状態から同期できます。端末に想定外の記録がある状態でD1が空の場合は、自動アップロードせず初回同期を停止します。双方に記録があれば既存の比較・手動解決を使います。削除・初期化は行いません。
 
-- 専用Worker: `haruki-production-inactive-44733572133`
-- 既存D1: `haruki-sync-qa-44663546163`
-- D1 UUID: `31dc86e4-3cc5-42dc-a738-5a9a6259747f`
-- Workerの `DB` バインディングは上記D1を参照。Cloudflare APIとWorker runtimeで確認済み。
-- D1は直接SELECTで `revision=0 / body=NULL`。ほかのD1の削除・初期化・改名は行っていない。
-- Workerは現在、家族コード未設定のため同期APIが `not_configured` を返す。本番デプロイworkflowが `haruki-production` Environment Secret `HARUKI_FAMILY_CODE` をWorker Secretとして登録し、5桁形式・テスト値でないこととD1の空状態を検証する。
-- アカウントD1数は10件、新規作成はHTTP 403 / 7406で拒否。既存の空D1を使うため、今回の作業で追加課金・DB削除は不要。Billing Read権限がないためCloudflare契約プラン自体はAPIから確定できていない。
-- 全D1の一覧・UUID・用途は [D1 inventory](D1-INVENTORY-2026-11-20.md)。
+## 検証結果
 
-## GitHub Pages とアプリ
+- [PR #15 regression audit](https://github.com/kota0317/haruki-basketball-quest/actions/runs/44740563248) 成功。クエスト、学習履歴、XP、英検、ゲーム、オープニング動画、バックアップ比較・復元、同期を合成データで回帰確認。
+- [2ブラウザ親子同期](https://github.com/kota0317/haruki-basketball-quest/actions/runs/44740285044) 成功。親側追加・編集、子側完了、XP/履歴、更新後保持、オフライン復帰、競合手動解決を確認。
+- [本番Worker認証確認](https://github.com/kota0317/haruki-basketball-quest/actions/runs/44741067054) 成功。Secretをログ表示せず、Family Codeで空のD1 snapshotを読み戻した。
+- Android実機2台での今回の本番公開後操作は未検証。Workから実機を操作していない。
 
-- 同期API URLは `cloudflare/sync-config.js` に本番Workerを設定済み。GitHub Pages公開後に利用可能になる。
-- 家族コードはソース・PR・Actionsログに出さず、Environment SecretからWorker Secretへ渡す。
-- アプリは初回接続後も端末内保存を維持する。空のクラウドに対して、空と判定された新規端末だけ同期を開始できる。想定外のローカル記録を見つけた場合は自動アップロードせず停止する。
-- 親子の初回接続後、クエスト、完了履歴、XP・レベル、英検・ゲーム進捗を既存の同期・競合処理で共有する。
-- Service Workerのキャッシュバージョンを更新し、公開後に新しい同期設定を読み直す。
+## 親子Androidでの初回操作
 
-## 回帰試験
+1. 親とハルキのAndroid Chromeで本番Pages URLを開く。
+2. 「GROWTH」→「管理・バックアップ」を開き、「親子同期」欄を確認する。
+3. ユーザーが保管している5桁の家族コードを両端末に入力し、「同期を開始」を押す。コードはチャット、PR、画面共有へ記載しない。空の新規端末ならJSONバックアップ確認なしで開始できる。
+4. 同期ステータスが「同期済み」になり、両端末のメニュー一覧が同じであることを確認する。
+5. 親側でテスト用ではない通常のクエストを1件追加し、ハルキ側で表示されることを確認する。ハルキ側で完了し、親側で完了履歴・XP/レベルが反映されることを確認する。ページを更新し、記録が維持されることも確認する。
+6. その後オフライン復帰と同時編集の動作を確認する。想定外の記録差分が出た場合は空D1へ無理に同期せず、比較・手動解決へ進む。
 
-- PR #15の単体、同期安全、ブラウザ統合、バックアップ比較、復元、英検、ゲーム、試合オープニングのGitHub Actions回帰が成功した後にマージする。
-- 合成データによる2ブラウザ試験で、親のクエスト追加・編集・削除、相手側への反映、完了履歴・XP・レベルの同期、オフライン再送、同時編集の手動解決を確認する。
-- 実Android端末での本番アプリ操作はこの環境からは実施しない。公開後、親子それぞれのAndroid Chromeでの手順を案内し、実機で未確認の結果は未検証と報告する。
+## 未完了項目
 
-## 公開後の初回操作
-
-1. GitHub Actionsの `Deploy configured production sync API` を `work/cloudflare-parent-sync` ブランチから手動実行する。Worker `haruki-production-inactive-44733572133` と上記D1名・UUIDを指定する。Environment Secretの値をログ・チャットに表示しない。
-2. Action成功後、Workerの認証付きGETが空のsnapshotを返すことを確認する。
-3. PR #15をmainへマージし、GitHub Pagesのデプロイ完了と本番URLを確認する。
-4. 親の端末で「管理・バックアップ」から親子同期を開き、家族コードを入力して同期を開始する。ハルキの端末も同じコードで同期を開始する。初回接続時は差分・競合画面の内容を確認する。想定外の端末記録が検出された場合は操作を続けず、同期を停止する。
-5. 親側で合成でない通常のクエストを1件追加し、ハルキ側で表示されることを確認する。ハルキ側でそのクエストを完了し、親側で完了・履歴・XPの反映とページ更新後の保持を確認する。オフライン復帰と同時編集も実機で確認する。
-6. 不具合時はアプリの「同期を停止」を両端末で使い、端末内記録は維持する。Cloudflare D1を削除・初期化しない。
-
-## 現在の未完了項目
-
-- 本番用家族コードのWorker Secret設定と認証付きAPI確認（GitHub Actions）。
-- PR #15の最終マージ。
-- GitHub Pages公開と公開後確認。
-- 親子2台のAndroid Chromeでの本番同期テスト。Work側では実機未検証。
+- 親子それぞれのAndroid Chromeで家族コード入力・本番同期を実行すること。
+- 親のクエスト追加がハルキに、ハルキの完了・学習結果が親に反映されることを実機で確認すること。
+- 実機でのオフライン復帰・同時編集・ページ再読み込みを確認すること。
+- Workの合成データ試験は上記実機確認の代替ではない。
