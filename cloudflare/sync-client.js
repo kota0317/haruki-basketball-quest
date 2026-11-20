@@ -16,7 +16,7 @@
  }
  function untransform(state){const v=clone(state);if(v.questData&&v.questData.menus&&!Array.isArray(v.questData.menus))v.questData.menus=Object.values(v.questData.menus);return v}
  const signature=x=>JSON.stringify(x);
- function empty(state){return !state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!(state.learningEvents||[]).length&&!state.eiken&&!state.activeMatch&&!(state.rpg?.bonusXP)&&!Object.keys(state.rpg?.awards||{}).length&&!Object.keys(state.rpg?.unlocked||{}).length&&!Object.keys(state.rpg?.titles||{}).length&&!(state.rpg?.plays||[]).length&&!(state.rpg?.giantWins)}
+ function empty(state){return !state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!(state.learningEvents||[]).length&&!state.eiken&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!state.activeMatch&&!(state.rpg?.bonusXP)&&!Object.keys(state.rpg?.awards||{}).length&&!Object.keys(state.rpg?.unlocked||{}).filter(k=>k!=='three'||state.rpg.unlocked[k]!==true).length&&!Object.keys(state.rpg?.titles||{}).length&&!(state.rpg?.plays||[]).length&&!(state.rpg?.giantWins)}
  async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await res.json();if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;throw e}return data}
  function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text}
  async function sync(){
@@ -37,7 +37,12 @@
    let revision=remote.revision;
    if(signature(next)!==signature(remote.data)) {const result=await req('PUT',{revision,data:next});revision=result.revision;}
    // A local edit during the request must not be overwritten.
-   if(signature(s)!==localSig){storeMeta({base:next,revision});status('端末の新しい変更を再送します');schedule();return;}
+   if(signature(s)!==localSig){
+    const pending=HQMerge.merge(transformed(local),transformed(s),transformed(next));
+    if(pending.conflicts.length){conflicts=pending.conflicts;status('同期中の変更が競合したため停止しました。端末の記録は保持しています。');return;}
+    const combined=untransform(pending.value);if(!validState(combined))throw Error('同期データの形式が不正です');
+    localStorage.setItem(KEY,JSON.stringify(combined));storeMeta({base:next,revision});s=combined;match=s.activeMatch||null;status('端末の新しい変更を再送します');schedule();return;
+   }
    // Persist before changing memory; any quota failure leaves the original untouched.
    localStorage.setItem(KEY,JSON.stringify(next));storeMeta({base:next,revision});s=next;match=s.activeMatch||null;conflicts=[];status('同期済み');render();
   }catch(e){status(e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule()}
