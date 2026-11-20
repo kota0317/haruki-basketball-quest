@@ -41,7 +41,7 @@ jobs:
           import json,os,re,urllib.request
           token=os.environ['CLOUDFLARE_API_TOKEN'];code=os.environ.get('FAMILY_CODE','');worker=os.environ['WORKER_NAME'];name=os.environ['DATABASE_NAME'];dbid=os.environ['DATABASE_ID'];base='https://api.cloudflare.com/client/v4'
           if not re.fullmatch(r'[0-9]{5}',code) or code=='12345':raise SystemExit('Set HARUKI_FAMILY_CODE to a production-only five-digit value, not the test value')
-          if not re.fullmatch(r'haruki-production(?:-inactive)?-[0-9]+',worker) or not re.fullmatch(r'haruki-production-[0-9]+',name) or not re.fullmatch(r'[0-9a-f-]{36}',dbid):raise SystemExit('Unexpected production resource identifier')
+          if not re.fullmatch(r'haruki-production(?:-inactive)?-[0-9]+',worker) or not re.fullmatch(r'haruki-(?:production|sync-qa)-[0-9]+',name) or not re.fullmatch(r'[0-9a-f-]{36}',dbid):raise SystemExit('Unexpected production resource identifier')
           def call(path,payload=None):
               req=urllib.request.Request(base+path,data=None if payload is None else json.dumps(payload).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
               with urllib.request.urlopen(req,timeout=30) as r:data=json.load(r)
