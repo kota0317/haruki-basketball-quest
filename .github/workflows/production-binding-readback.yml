@@ -3,6 +3,9 @@ on:
   push:
     branches: [work/cloudflare-parent-sync]
     paths: ['.github/workflows/production-binding-readback.yml']
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/production-binding-readback.yml']
 permissions:
   contents: read
 jobs:
