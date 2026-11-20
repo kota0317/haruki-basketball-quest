@@ -1,0 +1,39 @@
+name: Read-only verification of updated mobile preview
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/preview-readonly-verify.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Verify deployed preview without changing learning data
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request
+          api='https://api.cloudflare.com/client/v4';token=os.environ['CLOUDFLARE_API_TOKEN'];worker='haruki-sync-qa-44663139065';expected='haruki-mobile-preview-44666798466'
+          def cloud(path,data=None):
+              request=urllib.request.Request(api+path,data=None if data is None else json.dumps(data).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-preview-check/1.0'})
+              with urllib.request.urlopen(request,timeout=30) as response: obj=json.load(response)
+              if not obj.get('success'):raise RuntimeError('Cloudflare request failed')
+              return obj['result']
+          accounts=cloud('/accounts?per_page=50');assert len(accounts)==1
+          prefix='/accounts/'+accounts[0]['id'];bindings=cloud(prefix+'/workers/scripts/'+worker+'/settings')['bindings']
+          found=[x for x in bindings if x.get('name')=='DB' and x.get('type')=='d1'];assert len(found)==1
+          dbid=found[0].get('database_id') or found[0].get('id');assert cloud(prefix+'/d1/database/'+dbid)['name']==expected
+          result=cloud(prefix+'/d1/database/'+dbid+'/query',{'sql':'SELECT revision FROM family_snapshot WHERE id=1'});assert result[0]['results'][0]['revision']>=0
+          sub=cloud(prefix+'/workers/subdomain')['subdomain'];origin='https://'+worker+'.'+sub+'.workers.dev'
+          def get(path,headers=None):
+              h={'User-Agent':'haruki-preview-check/1.0'};h.update(headers or {})
+              with urllib.request.urlopen(urllib.request.Request(origin+path,headers=h),timeout=30) as response:return response.read().decode()
+          assert 'sync-client.js?v=2' in get('/')
+          js=get('/cloudflare/sync-client.js?v=2');assert '両方のメニューを残して同期する' in js and 'hqInitialLocalBackup' in js
+          snapshot=json.loads(get('/snapshot',{'Origin':origin,'X-Family-Code':'12345'}));assert isinstance(snapshot.get('revision'),int)
+          print('PASS: original D1 binding, revised client and authenticated read; no learning data written')
+          PY
