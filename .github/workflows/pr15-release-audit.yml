@@ -10,6 +10,7 @@ on:
       - 'cloudflare/**'
       - 'tests/**'
       - 'index.html'
+      - 'quest-ui.js'
       - 'sw.js'
 permissions:
   contents: read
