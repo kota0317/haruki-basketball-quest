@@ -34,3 +34,5 @@ jobs:
           timeout 90s node tests/opening-browser.cjs
           timeout 90s node tests/backup-compare.cjs
           timeout 90s node tests/sync-integration.cjs
+
+# Recheck after fixing asynchronous local-file test.
