@@ -1,0 +1,17 @@
+name: Sync safety helper tests
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['cloudflare/**', '.github/workflows/sync-safety-tests.yml']
+  pull_request:
+    paths: ['cloudflare/**', '.github/workflows/sync-safety-tests.yml']
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: node cloudflare/offline-queue.test.cjs
+      - run: node cloudflare/migration-preview.test.cjs
+      - run: node cloudflare/merge.test.cjs

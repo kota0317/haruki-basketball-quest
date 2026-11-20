@@ -1,0 +1,121 @@
+name: Isolated Cloudflare staging sync QA
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/cloudflare-staging.yml']
+permissions:
+  contents: read
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts wrangler playwright-core
+      - name: Provision isolated test database
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request
+          token=os.environ['CLOUDFLARE_API_TOKEN'];base='https://api.cloudflare.com/client/v4'
+          def request(method,path,payload=None):
+              req=urllib.request.Request(base+path,data=None if payload is None else json.dumps(payload).encode(),method=method,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=30) as r: data=json.load(r)
+              if not data.get('success'):raise RuntimeError('Cloudflare request failed')
+              return data['result']
+          accounts=request('GET','/accounts?per_page=50')
+          if len(accounts)!=1:raise RuntimeError('Expected exactly one accessible account')
+          account=accounts[0]['id'];run=os.environ['GITHUB_RUN_ID'];name='haruki-sync-qa-'+run;worker='haruki-sync-qa-44663139065'
+          db=request('POST','/accounts/'+account+'/d1/database',{'name':name});dbid=db['uuid']
+          query='/accounts/'+account+'/d1/database/'+dbid+'/query'
+          for statement in open('cloudflare/schema.sql').read().split(';'):
+              if statement.strip():
+                  out=request('POST',query,{'sql':statement})
+                  if any(not x.get('success') for x in out):raise RuntimeError('Schema setup failed')
+          sub=request('GET','/accounts/'+account+'/workers/subdomain')['subdomain']
+          config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'http://127.0.0.1:8798'},'d1_databases':[{'binding':'DB','database_name':name,'database_id':dbid}]}
+          open('wrangler.json','w').write(json.dumps(config))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_TEST_D1_ID='+dbid+'\nHQ_TEST_API=https://'+worker+'.'+sub+'.workers.dev\n')
+          print('Isolated synthetic database created:',name)
+          PY
+      - name: Deploy synthetic staging Worker
+        run: |
+          for attempt in 1 2 3; do npx wrangler deploy && break; [ "$attempt" -lt 3 ] || exit 1; sleep 8; done
+          printf '12345' | npx wrangler secret put FAMILY_CODE
+      - name: Wait for staging configuration
+        run: |
+          python3 - <<'PY'
+          import os,time,urllib.request,urllib.error,json
+          for i in range(12):
+              req=urllib.request.Request(os.environ['HQ_TEST_API']+'/snapshot',headers={'Origin':'http://127.0.0.1:8798','X-Family-Code':'12345','User-Agent':'haruki-sync-staging-qa/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=10) as response:
+                      if response.status==200: print('Staging API ready');break
+              except urllib.error.HTTPError as e:
+                  print('Not ready:',e.code,e.read(512).decode())
+              except Exception as e: print('Not ready:',type(e).__name__)
+              time.sleep(5)
+          else: raise SystemExit('Staging API did not become ready')
+          PY
+      - name: Verify two browsers against real Worker and D1
+        run: CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
+      - name: Read back synthetic data directly from D1
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request
+          url='https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']+'/d1/database/'+os.environ['HQ_TEST_D1_ID']+'/query'
+          req=urllib.request.Request(url,data=json.dumps({'sql':'SELECT revision,body FROM family_snapshot WHERE id=1'}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
+          with urllib.request.urlopen(req,timeout=30) as response: payload=json.load(response)
+          assert payload['success'] and payload['result'][0]['success']
+          rows=payload['result'][0]['results'];assert len(rows)==1 and rows[0]['revision']>0
+          state=json.loads(rows[0]['body'])
+          assert any(x.get('title')=='親の変更' for x in state['questData']['menus'])
+          assert any(x.get('title')=='オフライン追加' and x.get('deleted') for x in state['questData']['menus'])
+          assert state['questData']['completions']
+          assert any(x.get('subject')=='実環境の検証' for x in state['sessions'])
+          print('PASS D1 direct readback: quest, tombstone, completion and learning history')
+          PY
+      - name: Prepare isolated mobile preview
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,shutil,pathlib
+          base='https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']
+          headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'}
+          def post(path,data):
+              req=urllib.request.Request(base+path,data=json.dumps(data).encode(),method='POST',headers=headers)
+              with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
+              if not out['success']:raise RuntimeError('Cloudflare request failed')
+              return out['result']
+          db_name='haruki-mobile-preview-'+os.environ['GITHUB_RUN_ID']
+          dbid=post('/d1/database',{'name':db_name})['uuid']
+          for statement in open('cloudflare/schema.sql').read().split(';'):
+              if statement.strip():
+                  result=post('/d1/database/'+dbid+'/query',{'sql':statement})
+                  if any(not x.get('success') for x in result):raise RuntimeError('Schema setup failed')
+          root=pathlib.Path('staging_assets');root.mkdir()
+          for name in ['index.html','style.css','game.js','eiken-words.js','eiken.js','app.js','quest-ui.js','reading.js','experience.js','rpg.js','opening.js','sw.js']:
+              shutil.copy2(name,root/name)
+          shutil.copytree('assets',root/'assets')
+          (root/'cloudflare').mkdir()
+          for name in ['merge.js','sync-client.js']:shutil.copy2('cloudflare/'+name,root/'cloudflare'/name)
+          (root/'cloudflare'/'sync-config.js').write_text("window.HQ_SYNC_API=location.origin;")
+          index=root/'index.html'
+          index.write_text(index.read_text().replace('<body>','<body><div style="background:#b91c1c;color:white;padding:12px;text-align:center;font-weight:bold">検証版：実際の学習記録を入力しないでください</div>'))
+          config=json.load(open('wrangler.json'))
+          config['vars']['ALLOWED_ORIGIN']=os.environ['HQ_TEST_API']
+          config['d1_databases'][0]['database_id']=dbid
+          config['d1_databases'][0]['database_name']=db_name
+          config['assets']={'directory':'./staging_assets','binding':'ASSETS','run_worker_first':['/snapshot']}
+          open('wrangler.json','w').write(json.dumps(config))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('HQ_MOBILE_PREVIEW='+os.environ['HQ_TEST_API']+'\n')
+          print('Isolated mobile preview database created; no real data used.')
+          PY
+          npx wrangler deploy
+          printf '12345' | npx wrangler secret put FAMILY_CODE
+      - name: Verify mobile preview in two browsers
+        run: CHROME_PATH=/usr/bin/google-chrome node tests/mobile-preview.cjs

@@ -1,0 +1,55 @@
+name: Prepare inactive production Worker
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/production-worker-inactive.yml']
+permissions:
+  contents: read
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts wrangler
+      - name: Prepare a new inactive Worker without any D1 binding
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request
+          token=os.environ['CLOUDFLARE_API_TOKEN'];base='https://api.cloudflare.com/client/v4'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=30) as r:result=json.load(r)
+              if not result.get('success'):raise SystemExit('Cloudflare API call failed')
+              return result['result']
+          accounts=get('/accounts?per_page=50')
+          if len(accounts)!=1:raise SystemExit('Account selection is ambiguous')
+          account=accounts[0]['id'];prefix='/accounts/'+account;worker='haruki-production-inactive-'+os.environ['GITHUB_RUN_ID']
+          if any(x.get('id')==worker for x in get(prefix+'/workers/scripts')):raise SystemExit('Name exists; refusing to replace Worker')
+          domain=get(prefix+'/workers/subdomain')['subdomain'];origin='https://'+worker+'.'+domain+'.workers.dev'
+          config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'https://kota0317.github.io'}}
+          open('wrangler.json','w').write(json.dumps(config))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_PROD_WORKER='+worker+'\nHQ_PROD_API='+origin+'\n')
+          PY
+      - name: Deploy inactive Worker
+        run: npx wrangler deploy
+      - name: Check Worker rejects synchronization without configuration
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request,urllib.error
+          req=urllib.request.Request(os.environ['HQ_PROD_API']+'/snapshot',headers={'Origin':'https://kota0317.github.io','User-Agent':'haruki-production-setup/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=20) as r:status=r.status;data=json.load(r)
+          except urllib.error.HTTPError as e:
+              status=e.code
+              try:data=json.load(e)
+              except Exception:data={}
+          print('Worker:',os.environ['HQ_PROD_WORKER'],'HTTP:',status,'error:',data.get('error'))
+          if status!=503 or data.get('error')!='not_configured' or data.get('database') is not False or data.get('code_configured') is not False:raise SystemExit('Inactive Worker state not verified')
+          print('PASS: Worker deployed inactive without D1 or family code')
+          PY

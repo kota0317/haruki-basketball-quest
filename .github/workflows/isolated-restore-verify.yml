@@ -1,0 +1,38 @@
+name: Verify isolated restore site
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/isolated-restore-verify.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      HQ_RESTORE_URL: https://haruki-restore-isolated-44734621101.schef07apremium-c.workers.dev
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core
+      - name: Verify no write API and synthetic local restore
+        run: |
+          python3 - <<'PY'
+          import os,urllib.request,urllib.error
+          origin=os.environ['HQ_RESTORE_URL'];headers={'User-Agent':'haruki-restore-qa/1.0'}
+          req=urllib.request.Request(origin+'/',headers=headers)
+          try:
+              with urllib.request.urlopen(req,timeout=15) as r:body=r.read().decode();csp=r.headers.get('Content-Security-Policy','')
+          except urllib.error.HTTPError as e:
+              print('Restore site HTTP',e.code,'response',e.read(1024).decode(errors='replace'));raise SystemExit('Restore site is not accessible')
+          if '隔離した復元確認用' not in body or "connect-src 'none'" not in csp or 'cloudflare/sync-client.js' in body:raise SystemExit('Isolation headers or script exclusion not verified')
+          for method in ['GET','POST']:
+              req=urllib.request.Request(origin+'/snapshot',data=b'{}' if method=='POST' else None,method=method,headers=headers)
+              try:urllib.request.urlopen(req,timeout=15);raise SystemExit('Sync endpoint unexpectedly open')
+              except urllib.error.HTTPError as e:
+                  if e.code!=403:raise
+          print('PASS: disabled sync endpoint and outbound connect policy')
+          PY
+          CHROME_PATH=/usr/bin/google-chrome node tests/isolated-restore.cjs

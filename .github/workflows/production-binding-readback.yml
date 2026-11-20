@@ -1,0 +1,46 @@
+name: Read back production D1 binding
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/production-binding-readback.yml']
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/production-binding-readback.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Verify production Worker runtime and D1 snapshot metadata
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,urllib.error
+          base='https://api.cloudflare.com/client/v4';token=os.environ['CLOUDFLARE_API_TOKEN'];worker='haruki-production-inactive-44733572133';dbid='31dc86e4-3cc5-42dc-a738-5a9a6259747f';dbname='haruki-sync-qa-44663546163'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=20) as r:return json.load(r)['result']
+          acc=get('/accounts?per_page=50')
+          if len(acc)!=1:raise SystemExit('Account ambiguous')
+          a=acc[0]['id'];settings=get('/accounts/'+a+'/workers/scripts/'+worker+'/settings')
+          print('Settings API D1 bindings:',json.dumps([{'name':b.get('name'),'type':b.get('type'),'database_id':b.get('database_id'),'database_name':b.get('database_name'),'id':b.get('id')} for b in settings.get('bindings',[]) if b.get('type')=='d1']))
+          db=get('/accounts/'+a+'/d1/database/'+dbid)
+          if db.get('name')!=dbname:raise SystemExit('DB name mismatch')
+          req=urllib.request.Request(base+'/accounts/'+a+'/d1/database/'+dbid+'/query',data=json.dumps({'sql':'SELECT revision, length(body) AS body_bytes FROM family_snapshot WHERE id=1'}).encode(),method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+          with urllib.request.urlopen(req,timeout=20) as r:rows=json.load(r)['result'][0]['results']
+          if rows != [{'revision':0,'body_bytes':None}]:raise SystemExit('D1 snapshot changed')
+          print('D1 snapshot metadata:',json.dumps(rows))
+          url='https://'+worker+'.'+get('/accounts/'+a+'/workers/subdomain')['subdomain']+'.workers.dev/snapshot'
+          req=urllib.request.Request(url,headers={'Origin':'https://kota0317.github.io','User-Agent':'haruki-production-runtime-check/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=20) as r:status=r.status;payload=json.load(r)
+          except urllib.error.HTTPError as e:
+              status=e.code;payload=json.loads(e.read())
+          print('Runtime status:',status,'Runtime flags:',json.dumps(payload))
+          if status!=503 or payload.get('error')!='not_configured' or payload.get('database') is not True or payload.get('code_configured') is not False:
+              raise SystemExit('Production API is not safely inactive with DB binding')
+          print('PASS: Worker runtime sees D1; API remains closed without family code.')
+          PY

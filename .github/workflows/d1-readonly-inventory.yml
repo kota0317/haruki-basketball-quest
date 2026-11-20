@@ -1,0 +1,81 @@
+name: Read-only Cloudflare D1 inventory
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/d1-readonly-inventory.yml']
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: List D1 databases and their Worker bindings
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,urllib.error
+          token=os.environ.get('CLOUDFLARE_API_TOKEN','')
+          if not token: raise SystemExit('CLOUDFLARE_API_TOKEN is not available')
+          base='https://api.cloudflare.com/client/v4'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-readonly-d1-inventory/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r: status=r.status;obj=json.load(r)
+              except urllib.error.HTTPError as e:
+                  status=e.code
+                  try:obj=json.load(e)
+                  except Exception:obj={}
+              if status//100!=2 or not obj.get('success'):
+                  codes=[x.get('code') for x in obj.get('errors',[]) if isinstance(x,dict)]
+                  print('Cloudflare read failed: HTTP',status,'codes',codes)
+                  raise RuntimeError('Cloudflare read failed')
+              return obj['result']
+          def query(account,dbid,sql):
+              req=urllib.request.Request(base+'/accounts/'+account+'/d1/database/'+dbid+'/query',data=json.dumps({'sql':sql}).encode(),method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-readonly-d1-inventory/1.0'})
+              with urllib.request.urlopen(req,timeout=30) as r:obj=json.load(r)
+              if not obj.get('success') or not obj.get('result') or not obj['result'][0].get('success'):raise RuntimeError('D1 read query failed')
+              return obj['result'][0].get('results',[])
+          accounts=get('/accounts?per_page=50')
+          if len(accounts)!=1:raise SystemExit('Account selection is ambiguous')
+          account=accounts[0]['id'];print('::add-mask::'+account);prefix='/accounts/'+account
+          dbs=get(prefix+'/d1/database?per_page=10000')
+          scripts=get(prefix+'/workers/scripts')
+          bindings=[]
+          for script in scripts:
+              name=script.get('id')
+              if not name:continue
+              try:
+                  settings=get(prefix+'/workers/scripts/'+name+'/settings')
+                  for b in settings.get('bindings',[]):
+                      if b.get('type')=='d1':bindings.append({'worker':name,'binding':b.get('name'),'database_id':b.get('database_id') or b.get('id')})
+              except Exception:
+                  print('Worker settings unavailable:',name)
+          try:
+              subs=get(prefix+'/subscriptions')
+              print('ACCOUNT_SUBSCRIPTIONS',json.dumps([{'rate_plan':(x.get('rate_plan') or {}).get('id'),'state':x.get('state')} for x in subs],ensure_ascii=False))
+          except Exception:
+              print('ACCOUNT_SUBSCRIPTIONS unavailable (Billing Read permission may be missing)')
+          for d in dbs:
+              dbid=d.get('uuid');name=d.get('name','')
+              try:detail=get(prefix+'/d1/database/'+dbid)
+              except Exception:detail=d
+              attached=[x['worker']+':'+str(x['binding']) for x in bindings if x['database_id']==dbid]
+              try:
+                  tables=query(account,dbid,"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                  names=[x['name'] for x in tables]
+                  snapshot=None
+                  if 'family_snapshot' in names:
+                      rows=query(account,dbid,'SELECT revision, length(body) AS body_bytes FROM family_snapshot WHERE id=1')
+                      snapshot=rows[0] if rows else None
+              except Exception as e:
+                  names=[];snapshot={'read_error':type(e).__name__}
+              haruki=any(x in name.lower() for x in ('haruki','basketball','446','447'))
+              role='HARUKI専用候補' if haruki else '用途要確認'
+              if any(('preview' in x.lower() or 'staging' in x.lower() or 'qa' in x.lower()) for x in attached):role='検証・プレビュー接続'
+              print(json.dumps({'name':name,'id':dbid,'created_at':detail.get('created_at') or d.get('created_at'),'file_size_bytes':detail.get('file_size'),'workers':attached,'tables':names,'snapshot_metadata_only':snapshot,'initial_classification':role},ensure_ascii=False))
+          print('TOTAL_D1_DATABASES',len(dbs))
+          print('TOTAL_WORKERS',len(scripts))
+          PY

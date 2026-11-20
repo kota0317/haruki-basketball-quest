@@ -1,0 +1,75 @@
+name: Prepare isolated local restore site
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/isolated-restore-site.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts wrangler playwright-core
+      - name: Prepare isolated assets without sync code
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,shutil,urllib.request
+          token=os.environ['CLOUDFLARE_API_TOKEN'];base='https://api.cloudflare.com/client/v4'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token})
+              with urllib.request.urlopen(req,timeout=30) as r:x=json.load(r)
+              if not x.get('success'):raise SystemExit('Cloudflare lookup failed')
+              return x['result']
+          accounts=get('/accounts?per_page=50')
+          if len(accounts)!=1:raise SystemExit('Account selection ambiguous')
+          account=accounts[0]['id'];prefix='/accounts/'+account;worker='haruki-restore-isolated-'+os.environ['GITHUB_RUN_ID']
+          if any(x.get('id')==worker for x in get(prefix+'/workers/scripts')):raise SystemExit('Existing Worker name; refusing to modify')
+          domain=get(prefix+'/workers/subdomain')['subdomain'];origin='https://'+worker+'.'+domain+'.workers.dev';root=pathlib.Path('restore_assets');root.mkdir()
+          for x in ['index.html','style.css','game.js','eiken-words.js','eiken.js','app.js','quest-ui.js','reading.js','experience.js','rpg.js','opening.js','sw.js']:shutil.copy2(x,root/x)
+          shutil.copytree('assets',root/'assets')
+          index=root/'index.html';text=index.read_text()
+          import re
+          for x in ['merge','sync-config','sync-client']:
+              text,n=re.subn(r'<script src="cloudflare/'+x+r'\.js\?v=\d+"></script>','',text)
+              if n!=1:raise SystemExit('Unexpected sync script layout')
+          text=text.replace('<body>','<body><div style="background:#1d4e89;color:white;padding:1em;text-align:center">隔離した復元確認用：同期・データ送信はできません</div>')
+          index.write_text(text)
+          # No sync scripts exist here; remove their precache entries so offline install succeeds.
+          sw=root/'sw.js';s=sw.read_text()
+          for x in ['merge','sync-config','sync-client']:s=s.replace("'cloudflare/"+x+".js',",'')
+          sw.write_text(s)
+          pathlib.Path('restore-worker.mjs').write_text('export default {async fetch(request,env){const u=new URL(request.url);if(!["GET","HEAD"].includes(request.method)||u.pathname==="/snapshot")return new Response("disabled",{status:403});const r=await env.ASSETS.fetch(request);const h=new Headers(r.headers);h.set("Content-Security-Policy","default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data: blob:; media-src \'self\' blob:; connect-src \'none\'; object-src \'none\'; form-action \'none\'; base-uri \'self\'");return new Response(r.body,{status:r.status,headers:h})}};')
+          cfg={'name':worker,'main':'restore-worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'assets':{'directory':'./restore_assets','binding':'ASSETS','run_worker_first':True}}
+          pathlib.Path('wrangler.json').write_text(json.dumps(cfg))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_RESTORE_WORKER='+worker+'\nHQ_RESTORE_URL='+origin+'\n')
+          PY
+      - name: Deploy separate restore site
+        run: npx wrangler deploy
+      - name: Verify no write API and local synthetic restore
+        run: |
+          python3 - <<'PY'
+          import os,time,urllib.request,urllib.error
+          origin=os.environ['HQ_RESTORE_URL']
+          for i in range(15):
+              try:
+                  with urllib.request.urlopen(origin+'/',timeout=15) as r:
+                      body=r.read().decode();csp=r.headers.get('Content-Security-Policy','')
+                      if '隔離した復元確認用' in body and "connect-src 'none'" in csp and 'cloudflare/sync-client.js' not in body:break
+              except urllib.error.HTTPError as e:print('Site not ready, HTTP',e.code)
+              time.sleep(4)
+          else:raise SystemExit('Restore site did not become ready')
+          for method in ['GET','POST']:
+              req=urllib.request.Request(origin+'/snapshot',data=b'{}' if method=='POST' else None,method=method)
+              try:urllib.request.urlopen(req,timeout=15);raise SystemExit('Sync endpoint unexpectedly open')
+              except urllib.error.HTTPError as e:
+                  if e.code!=403:raise
+          print('PASS: no sync endpoint, no outbound connect; URL:',origin)
+          PY
+          CHROME_PATH=/usr/bin/google-chrome node tests/isolated-restore.cjs
