@@ -18,3 +18,9 @@ jobs:
           node-version: '24'
       - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core
       - run: CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
+      - name: Verify backup and restore
+        run: |
+          python3 -m http.server 8792 --bind 127.0.0.1 >/tmp/haruki-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid' EXIT
+          CHROME_PATH=/usr/bin/google-chrome node tests/local-persistence.cjs
