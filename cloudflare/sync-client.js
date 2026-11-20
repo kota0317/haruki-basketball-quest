@@ -106,9 +106,11 @@
   if(busy||!initialDiff)return;
   if(!document.getElementById('hqInitialLocalBackup')?.checked||!document.getElementById('hqInitialRemoteBackup')?.checked){alert('この端末と相手の端末、両方のバックアップを保存して確認してください');return}
   const ctx=initialDiff;
-  if(ctx.plan.blocked.length){status('進捗や履歴に自動統合できない差があります。記録は保持しています。');return}
+  if(ctx.plan.hardErrors?.length){status('完了履歴を安全に確認できないため統合を停止しました。');return}
   const choices=ctx.plan.menuConflicts.map((_,i)=>document.querySelector('input[name="hq-initial-menu-'+i+'"]:checked')?.value);
   if(choices.some(x=>x!=='local'&&x!=='remote')){alert('同じメニューの採用する内容を選んでください');return}
+  const recordChoices=ctx.plan.blocked.map((_,i)=>document.querySelector('input[name="hq-initial-record-'+i+'"]:checked')?.value);
+  if(recordChoices.some(x=>x!=='local'&&x!=='remote')){alert('自動統合できない記録について、採用する内容を選んでください');return}
   if(signature(s)!==ctx.localSig){initialDiff=null;status('端末の記録が変わりました。比較し直します。');await sync();return}
   busy=true;
   try{
@@ -118,6 +120,12 @@
    for(let i=0;i<ctx.plan.menuConflicts.length;i++){
     const row=ctx.plan.menuConflicts[i],id=row.path[2];
     Object.defineProperty(selected.questData.menus,id,{value:clone(row[choices[i]]),enumerable:true,configurable:true,writable:true});
+   }
+   for(let i=0;i<ctx.plan.blocked.length;i++){
+    const row=ctx.plan.blocked[i];let target=selected;
+    for(const key of row.path.slice(0,-1)){if(!target||typeof target!=='object'||!Object.hasOwn(target,key))throw Error('記録の位置を確認できません');target=target[key]}
+    if(!row.path.length)throw Error('記録の位置を確認できません');
+    Object.defineProperty(target,row.path.at(-1),{value:clone(row[recordChoices[i]]),enumerable:true,configurable:true,writable:true});
    }
    const joined=untransform(selected);if(!validState(joined))throw Error('統合結果の形式が不正です');
    // Save both originals before attempting any remote or local write. A quota
@@ -150,9 +158,14 @@
     section.appendChild(side);
    }
    if(ctx.plan.menuConflicts.length){section.appendChild(el('h4','同じメニューの内容を選択'));ctx.plan.menuConflicts.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend','同じメニュー：どちらを残しますか'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-initial-menu-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label+'：'+menuDetails(row[key])));field.appendChild(wrap)}section.appendChild(field)});}
-   if(ctx.plan.blocked.length){const warning=el('p','学習履歴・XP・試合記録などに自動統合できない差があります。両方の記録を保持して同期を停止しています。');warning.setAttribute('role','alert');section.appendChild(warning);}
+      if(ctx.plan.hardErrors?.length){const warning=el('p','完了履歴の識別子または XP を確認できないため、統合できません。両方のバックアップを保存してください。');warning.setAttribute('role','alert');section.appendChild(warning);}
+   if(ctx.plan.blocked.length){
+    const warning=el('p','自動統合できない記録があります。採用しなかった内容は画面の集計に反映されませんが、保存したバックアップに残ります。');warning.setAttribute('role','alert');section.appendChild(warning);
+    const labelFor=path=>path[0]==='rpg'?'追加 XP・ゲーム進捗':path[0]==='questData'&&path[1]==='completions'?'同じ日の完了履歴':({sessions:'学習時間の記録',answers:'学習回答',matches:'試合履歴',settings:'設定',learningEvents:'学習履歴',eikenDaily:'英検進捗'})[path[0]]||'その他の記録';
+    ctx.plan.blocked.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend',labelFor(row.path)+'：採用する内容を選択'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-initial-record-'+i;radio.value=key;wrap.appendChild(radio);const value=row.path[0]==='rpg'&&row.path.length===1?'追加 XP '+(Number(row[key]?.bonusXP)||0)+' ／ 獲得記録 '+Object.keys(row[key]?.awards||{}).length+'件 ／ 試合プレー '+(row[key]?.plays||[]).length+'件':readable(row[key]);wrap.appendChild(document.createTextNode(label+'：'+value));field.appendChild(wrap)}section.appendChild(field)});
+   }
    for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const button=el('button',label+'のバックアップを保存');button.type='button';button.className='secondary';button.onclick=()=>window.hqInitialBackup(key);section.appendChild(button);const wrap=el('label'),check=el('input');check.type='checkbox';check.id=key==='local'?'hqInitialLocalBackup':'hqInitialRemoteBackup';wrap.appendChild(check);wrap.appendChild(document.createTextNode(label+'のバックアップを保存して確認しました'));section.appendChild(wrap)}
-   const join=el('button','両方のメニューを残して同期する');join.type='button';join.disabled=!!ctx.plan.blocked.length;join.onclick=window.hqInitialMerge;section.appendChild(join);
+   const join=el('button','両方のメニューを残して同期する');join.type='button';join.disabled=!!ctx.plan.hardErrors?.length;join.onclick=window.hqInitialMerge;section.appendChild(join);
   }else{
    conflicts.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend','変更内容を比較'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-conflict-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label+'：'+(row[key].exists?readable(row[key].value):'（削除）')));field.appendChild(wrap)}section.appendChild(field)});
    const button=el('button','選んだ内容で同期');button.type='button';button.onclick=window.hqResolveConflicts;section.appendChild(button);
