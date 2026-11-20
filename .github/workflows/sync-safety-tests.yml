@@ -14,3 +14,4 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - run: node cloudflare/offline-queue.test.cjs
       - run: node cloudflare/migration-preview.test.cjs
+      - run: node cloudflare/merge.test.cjs
