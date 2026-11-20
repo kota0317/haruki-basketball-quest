@@ -9,7 +9,7 @@ const assert=require('node:assert/strict');
  const b=JSON.parse(JSON.stringify(a));b.questData.menus[0].deleted=false;delete b.questData.completions['q@2026-11-20'];
  await page.locator('#before').setInputFiles({name:'before.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(a))});
  await page.locator('#after').setInputFiles({name:'after.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(b))});
- await page.getByRole('button',{name:'比較する'}).click();const text=await page.locator('#result').innerText();
+ await page.getByRole('button',{name:'比較する'}).click();await page.waitForFunction(()=>document.getElementById('result').textContent.length>0);const text=await page.locator('#result').innerText();
  assert.match(text,/削除状態が変わったメニュー ID：deleted-id/);assert.match(text,/統合後にない完了履歴 ID：q@2026-11-20/);assert.match(text,/クエスト XP/);assert.deepEqual(external,[]);
  console.log('PASS local-only backup comparison reports IDs, deleted state, history and XP');
  }finally{await browser.close()}})().catch(e=>{console.error(e);process.exitCode=1});
