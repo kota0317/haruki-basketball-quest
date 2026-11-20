@@ -19,7 +19,7 @@ permissions:
 jobs:
   deploy:
     # Execute only after the user explicitly approves production release.
-    if: github.ref == 'refs/heads/work/cloudflare-parent-sync'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/cloudflare-parent-sync'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment: haruki-production
