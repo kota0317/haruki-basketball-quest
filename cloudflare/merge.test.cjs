@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {merge}=require('./merge.js');
+let a=merge({title:'a',xp:10},{title:'b',xp:10},{title:'a',xp:20});
+assert.deepEqual(JSON.parse(JSON.stringify(a.value)),{title:'b',xp:20});assert.equal(a.conflicts.length,0);
+a=merge({title:'a'},{title:'b'},{title:'c'});assert.equal(a.conflicts.length,1);assert.deepEqual(a.conflicts[0].path,['title']);assert.equal(a.conflicts[0].remote.value,'c');
+a=merge({task:{title:'a'}},{},{task:{title:'b'}});assert.equal(a.conflicts.length,1);assert.equal(a.conflicts[0].local.exists,false);
+a=merge({x:null},{},{x:null});assert.equal(a.conflicts.length,0);assert.equal('x' in a.value,false);
+a=merge({arr:[1]},{arr:[1,2]},{arr:[1,3]});assert.equal(a.conflicts.length,1);
+const proto=JSON.parse('{"__proto__":{"a":1}}');
+a=merge(proto,JSON.parse('{"__proto__":{"a":2}}'),JSON.parse('{"__proto__":{"a":1,"b":3}}'));
+assert.equal(a.conflicts.length,0);assert.equal(JSON.parse(JSON.stringify(a.value)).__proto__.a,2);assert.equal({}.a,undefined);
+console.log('PASS independent edits, conflicts, deletes, nulls, arrays and unsafe keys');
