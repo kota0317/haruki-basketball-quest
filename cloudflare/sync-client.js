@@ -1,4 +1,4 @@
-// Staging-only integration. Nothing is uploaded until a user enables sync after backup.
+// Family sync integration. Empty devices can start sync; unexpected local records stop before cloud upload.
 'use strict';
 (function(){
  const authKey='hq-sync-code-v1', metaKey='hq-sync-meta-v1';
@@ -35,7 +35,10 @@
   try{
    status('同期を確認中…');const remote=await req('GET');let meta=readMeta();const local=clone(s), localSig=signature(local);let next;
    if(!meta){
-    if(remote.data===null){next=local;}
+    if(remote.data===null){
+      if(empty(local)){next=local;}
+      else {status('この端末に既存の学習記録が見つかりました。空のクラウドへの初回同期は停止しました。端末の記録は保持されています。内容を確認してください。');return;}
+     }
     else if(empty(local)){next=remote.data;}
     else {initialDiff={local,remote:clone(remote.data),revision:remote.revision,localSig,plan:HQMerge.initial(transformed(local),transformed(remote.data))};status('両方にデータがあります。内容を比較してください。初回同期は停止中です。');render();return;}
    }else if(remote.data===null){status('クラウドが空のため同期を停止しました。端末の記録は保持しています。');return;}
@@ -64,7 +67,7 @@
  window.hqSyncEnable=async function(){
   if(!api()){alert('同期サーバーはまだ設定されていません。');return}
   const input=document.getElementById('hqCode').value;if(!/^\d{5}$/.test(input)){alert('数字5桁を入力してください');return}
-  if(!document.getElementById('hqBackup').checked){alert('先にバックアップを保存し、確認欄にチェックしてください');return}
+  if(!document.getElementById('hqBackup').checked&&!empty(s)){alert('端末に記録があるため、先にバックアップを保存し、確認欄にチェックしてください');return}
   try{localStorage.setItem(authKey,input);await sync()}catch(e){alert('端末に保存できません: '+e.message)}
  };
  window.hqSyncNow=sync;
@@ -165,7 +168,7 @@
     const labelFor=path=>path[0]==='rpg'?'追加 XP・ゲーム進捗':path[0]==='questData'&&path[1]==='completions'?'同じ日の完了履歴':({sessions:'学習時間の記録',answers:'学習回答',matches:'試合履歴',settings:'設定',learningEvents:'学習履歴',eikenDaily:'英検進捗'})[path[0]]||'その他の記録';
     ctx.plan.blocked.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend',labelFor(row.path)+'：採用する内容を選択'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-initial-record-'+i;radio.value=key;wrap.appendChild(radio);const value=row.path[0]==='rpg'&&row.path.length===1?'追加 XP '+(Number(row[key]?.bonusXP)||0)+' ／ 獲得記録 '+Object.keys(row[key]?.awards||{}).length+'件 ／ 発生元：'+awardSummary(row[key])+' ／ 試合プレー '+(row[key]?.plays||[]).length+'件':readable(row[key]);wrap.appendChild(document.createTextNode(label+'：'+value));field.appendChild(wrap)}section.appendChild(field)});
    }
-   for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const button=el('button',label+'のバックアップを保存');button.type='button';button.className='secondary';button.onclick=()=>window.hqInitialBackup(key);section.appendChild(button);const wrap=el('label'),check=el('input');check.type='checkbox';check.id=key==='local'?'hqInitialLocalBackup':'hqInitialRemoteBackup';wrap.appendChild(check);wrap.appendChild(document.createTextNode(label+'のバックアップを保存して確認しました'));section.appendChild(wrap)}
+   for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const button=el('button',label+'のバックアップを保存');button.type='button';button.className='secondary';button.onclick=()=>window.hqInitialBackup(key);section.appendChild(button);const wrap=el('label'),check=el('input');check.type='checkbox';check.id=key==='local'?'hqInitialLocalBackup':'hqInitialRemoteBackup';wrap.appendChild(check);wrap.appendChild(document.createTextNode(label+'のこの端末に記録がある場合、バックアップを保存して確認しました'));section.appendChild(wrap)}
    const join=el('button','両方のメニューを残して同期する');join.type='button';join.disabled=!!ctx.plan.hardErrors?.length;join.onclick=window.hqInitialMerge;section.appendChild(join);
   }else{
    conflicts.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend','変更内容を比較'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-conflict-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label+'：'+(row[key].exists?readable(row[key].value):'（削除）')));field.appendChild(wrap)}section.appendChild(field)});
@@ -175,6 +178,6 @@
  }
 
  window.hqConflictDownload=function(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({conflicts,local:s,base:readMeta()?.base},null,2)],{type:'application/json'}));a.download='haruki-sync-conflicts.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
- const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期（検証版）</h3><p>先にこの端末の記録をバックアップしてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app)};
+ const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>記録がある端末で初回統合する場合は、双方のバックアップを保存してから進めてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app)};
  window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);if(code())schedule();
 })();
