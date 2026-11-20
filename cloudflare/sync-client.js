@@ -31,13 +31,13 @@
  async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await res.json();if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;throw e}return data}
  function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text}
  async function sync(){
-  if(busy||conflictContext||!code()||!api()||storageBlocked)return;busy=true;
+  if(busy||conflictContext||initialDiff||!code()||!api()||storageBlocked)return;busy=true;
   try{
    status('同期を確認中…');const remote=await req('GET');let meta=readMeta();const local=clone(s), localSig=signature(local);let next;
    if(!meta){
     if(remote.data===null){next=local;}
     else if(empty(local)){next=remote.data;}
-    else {initialDiff={local,remote:remote.data};status('両方にデータがあります。内容を比較してください。初回同期は停止中です。');render();return;}
+    else {initialDiff={local,remote:clone(remote.data),revision:remote.revision,localSig,plan:HQMerge.initial(transformed(local),transformed(remote.data))};status('両方にデータがあります。内容を比較してください。初回同期は停止中です。');render();return;}
    }else if(remote.data===null){status('クラウドが空のため同期を停止しました。端末の記録は保持しています。');return;}
    else {
     const merged=HQMerge.merge(transformed(meta.base),transformed(local),transformed(remote.data));
@@ -68,7 +68,7 @@
   try{localStorage.setItem(authKey,input);await sync()}catch(e){alert('端末に保存できません: '+e.message)}
  };
  window.hqSyncNow=sync;
- window.hqSyncDisconnect=function(){localStorage.removeItem(authKey);status('同期を停止しました。端末の記録は残っています。');render()};
+ window.hqSyncDisconnect=function(){localStorage.removeItem(authKey);initialDiff=null;conflictContext=null;conflicts=[];status('同期を停止しました。端末の記録は残っています。');render()};
  // Resolve only an exact, still-current snapshot; a stale selection never overwrites newer edits.
  window.hqResolveConflicts=async function(){
   if(busy||!conflictContext)return;
@@ -100,20 +100,66 @@
   }catch(e){status(e.status===409?'相手の変更が更新されました。再確認してください。':'解決できませんでした。両方の記録は保持されています（'+e.message+'）')}
   finally{busy=false;if(!conflictContext&&conflicts.length===0&&message.includes('再確認'))schedule()}
  };
+ function downloadBackup(data,name){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+ window.hqInitialBackup=function(which){if(initialDiff)downloadBackup(initialDiff[which],which==='local'?'haruki-this-device-backup.json':'haruki-other-device-backup.json')};
+ window.hqInitialMerge=async function(){
+  if(busy||!initialDiff)return;
+  if(!document.getElementById('hqInitialLocalBackup')?.checked||!document.getElementById('hqInitialRemoteBackup')?.checked){alert('この端末と相手の端末、両方のバックアップを保存して確認してください');return}
+  const ctx=initialDiff;
+  if(ctx.plan.blocked.length){status('進捗や履歴に自動統合できない差があります。記録は保持しています。');return}
+  const choices=ctx.plan.menuConflicts.map((_,i)=>document.querySelector('input[name="hq-initial-menu-'+i+'"]:checked')?.value);
+  if(choices.some(x=>x!=='local'&&x!=='remote')){alert('同じメニューの採用する内容を選んでください');return}
+  if(signature(s)!==ctx.localSig){initialDiff=null;status('端末の記録が変わりました。比較し直します。');await sync();return}
+  busy=true;
+  try{
+   const latest=await req('GET');
+   if(latest.revision!==ctx.revision||signature(latest.data)!==signature(ctx.remote)){initialDiff=null;status('相手の記録が変わりました。比較し直します。');return}
+   const selected=clone(ctx.plan.value);
+   for(let i=0;i<ctx.plan.menuConflicts.length;i++){
+    const row=ctx.plan.menuConflicts[i],id=row.path[2];
+    Object.defineProperty(selected.questData.menus,id,{value:clone(row[choices[i]]),enumerable:true,configurable:true,writable:true});
+   }
+   const joined=untransform(selected);if(!validState(joined))throw Error('統合結果の形式が不正です');
+   // Save both originals before attempting any remote or local write. A quota
+   // error aborts, and the backup remains available even if the request fails.
+   localStorage.setItem('hq-sync-initial-backup-'+crypto.randomUUID(),JSON.stringify({time:new Date().toISOString(),local:ctx.local,remote:ctx.remote}));
+   const saved=await req('PUT',{revision:latest.revision,data:joined});
+   if(signature(s)!==ctx.localSig){initialDiff=null;status('同期中に端末の記録が変わりました。比較し直します。');return}
+   localStorage.setItem(KEY,JSON.stringify(joined));storeMeta({base:joined,revision:saved.revision});s=joined;match=s.activeMatch||null;initialDiff=null;status('両方のメニューを残して同期しました');render();
+  }catch(e){if(e.status===409){initialDiff=null;status('相手の記録が変わりました。比較し直します。')}else status('統合できませんでした。両方の記録は保持されています（'+e.message+'）')}
+  finally{busy=false;if(!initialDiff&&message.includes('比較し直します'))schedule()}
+ };
+ function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);if(cls)node.className=cls;return node}
+ function menuDetails(m){if(!m)return '記録なし';return [m.title||'名称なし',m.subject||'科目未設定',(Number(m.minutes)||0)+'分',(Number(m.xp)||0)+' XP',m.date||'',m.repeat==='daily'?'毎日':m.repeat==='weekly'?'毎週':'',m.deleted?'削除済み':'',m.note||''].filter(Boolean).join(' ・ ')}
+ function readable(v){if(v===undefined)return '記録なし';if(v===null)return 'なし';if(typeof v!=='object')return typeof v==='boolean'?(v?'あり':'なし'):String(v);if(Array.isArray(v))return v.length?v.map(x=>readable(x)).join('／'):'記録なし';if('title' in v)return menuDetails(v);const labels={xp:'XP',minutes:'学習時間',date:'日付',subject:'科目',title:'メニュー',bonusXP:'追加 XP',giantWins:'勝利数',won:'勝敗',kind:'種類',note:'内容',repeat:'繰り返し'};const parts=Object.entries(v).filter(([k])=>k!=='id').slice(0,12).map(([k,x])=>(labels[k]||'記録')+'：'+readable(x));return parts.join(' ・ ')||'記録なし'}
  function appendComparison(app){
   if(!conflictContext&&!initialDiff)return;
-  const section=document.createElement('section');section.className='card';
-  const heading=document.createElement('h3');heading.textContent=initialDiff?'初回同期の内容を比較':'同時編集の確認';section.appendChild(heading);
-  const note=document.createElement('p');note.textContent=initialDiff?'両方に記録があります。自動上書きしません。両端末のバックアップを保存してから確認してください。':'この端末と相手の端末の内容を比較し、各項目で採用する方を選んでください。';section.appendChild(note);
+  const section=el('section',undefined,'card hq-compare');section.appendChild(el('h3',initialDiff?'初回同期の内容を比較':'同時編集の確認'));
+  section.appendChild(el('p',initialDiff?'両方の内容を確認し、それぞれのバックアップを保存してください。':'この端末と相手の端末の内容を比較し、採用する内容を選んでください。'));
   if(initialDiff){
-   const labels={questData:'学習メニューと完了履歴',sessions:'学習時間',answers:'学習回答',eikenDaily:'英検進捗',rpg:'ゲーム・XP',matches:'試合履歴',settings:'設定',learningEvents:'学習履歴'};const lists=[...new Set([...Object.keys(initialDiff.local),...Object.keys(initialDiff.remote)])].sort().map(k=>[labels[k]||k,x=>Object.hasOwn(x,k)?x[k]:{missing:true}]);
-   for(const [name,get] of lists){const left=get(initialDiff.local),right=get(initialDiff.remote);if(signature(left)===signature(right))continue;const title=document.createElement('h4');title.textContent=name;section.appendChild(title);for(const [label,value] of [['この端末',left],['相手の端末',right]]){const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:14em;overflow:auto';pre.textContent=label+'：\n'+JSON.stringify(value,null,2);section.appendChild(pre)}}
+   const ctx=initialDiff;
+   for(const [label,state] of [['この端末',ctx.local],['相手の端末',ctx.remote]]){
+    const side=el('section',undefined,'box');side.style.margin='12px 0';side.appendChild(el('h4',label));
+    const menus=state.questData?.menus||[];side.appendChild(el('strong','学習メニュー '+menus.length+'件'));if(!menus.length)side.appendChild(el('p','メニューはありません'));
+    for(const m of menus)side.appendChild(el('p',menuDetails(m)));
+    const completed=Object.values(state.questData?.completions||{}),xp=completed.reduce((n,x)=>n+(Number(x?.xp)||0),0);
+    side.appendChild(el('strong','完了履歴 '+completed.length+'件'));for(const c of completed)side.appendChild(el('p',menuDetails(c)));
+    side.appendChild(el('p','クエスト XP：'+xp+' ／ 追加 XP：'+(Number(state.rpg?.bonusXP)||0)));
+    const matches=state.matches||[];side.appendChild(el('p','試合履歴：'+matches.length+'試合 ／ 勝利：'+matches.filter(x=>x.won).length+'試合'));
+    side.appendChild(el('p','学習時間の記録：'+(state.sessions||[]).length+'件 ／ 学習回答：'+(state.answers||[]).length+'件'));
+    section.appendChild(side);
+   }
+   if(ctx.plan.menuConflicts.length){section.appendChild(el('h4','同じメニューの内容を選択'));ctx.plan.menuConflicts.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend','同じメニュー：どちらを残しますか'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-initial-menu-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label+'：'+menuDetails(row[key])));field.appendChild(wrap)}section.appendChild(field)});}
+   if(ctx.plan.blocked.length){const warning=el('p','学習履歴・XP・試合記録などに自動統合できない差があります。両方の記録を保持して同期を停止しています。');warning.setAttribute('role','alert');section.appendChild(warning);}
+   for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const button=el('button',label+'のバックアップを保存');button.type='button';button.className='secondary';button.onclick=()=>window.hqInitialBackup(key);section.appendChild(button);const wrap=el('label'),check=el('input');check.type='checkbox';check.id=key==='local'?'hqInitialLocalBackup':'hqInitialRemoteBackup';wrap.appendChild(check);wrap.appendChild(document.createTextNode(label+'のバックアップを保存して確認しました'));section.appendChild(wrap)}
+   const join=el('button','両方のメニューを残して同期する');join.type='button';join.disabled=!!ctx.plan.blocked.length;join.onclick=window.hqInitialMerge;section.appendChild(join);
   }else{
-   conflicts.forEach((row,i)=>{const field=document.createElement('fieldset');const legend=document.createElement('legend');legend.textContent='項目：'+(row.path.join(' › ')||'全体');field.appendChild(legend);for(const [key,label] of [['local','この端末（親またはハルキ）'],['remote','相手の端末（ハルキまたは親）']]){const wrap=document.createElement('label'),radio=document.createElement('input');radio.type='radio';radio.name='hq-conflict-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label));const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto';pre.textContent=row[key].exists?JSON.stringify(row[key].value,null,2):'（削除）';wrap.appendChild(pre);field.appendChild(wrap)}section.appendChild(field)});
-   const button=document.createElement('button');button.type='button';button.textContent='選んだ内容で同期';button.onclick=window.hqResolveConflicts;section.appendChild(button);
+   conflicts.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend','変更内容を比較'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-conflict-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label+'：'+(row[key].exists?readable(row[key].value):'（削除）')));field.appendChild(wrap)}section.appendChild(field)});
+   const button=el('button','選んだ内容で同期');button.type='button';button.onclick=window.hqResolveConflicts;section.appendChild(button);
   }
   app.appendChild(section);
  }
+
  window.hqConflictDownload=function(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({conflicts,local:s,base:readMeta()?.base},null,2)],{type:'application/json'}));a.download='haruki-sync-conflicts.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
  const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期（検証版）</h3><p>先にこの端末の記録をバックアップしてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app)};
  window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);if(code())schedule();
