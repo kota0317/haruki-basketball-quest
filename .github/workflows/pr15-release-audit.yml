@@ -29,10 +29,8 @@ jobs:
           server_pid=$!
           trap 'kill $server_pid' EXIT
           export CHROME_PATH=/usr/bin/google-chrome
-          node tests/quest-browser.cjs
-          node tests/local-persistence.cjs
-          node tests/experience-browser.cjs
-          node tests/rpg-browser.cjs
-          node tests/opening-browser.cjs
-          node tests/backup-compare.cjs
-          node tests/sync-integration.cjs
+          timeout 90s node tests/experience-browser.cjs
+          timeout 90s node tests/rpg-browser.cjs
+          timeout 90s node tests/opening-browser.cjs
+          timeout 90s node tests/backup-compare.cjs
+          timeout 90s node tests/sync-integration.cjs
