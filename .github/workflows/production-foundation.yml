@@ -1,0 +1,78 @@
+name: Prepare isolated production sync foundation
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/production-foundation.yml']
+permissions:
+  contents: read
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts wrangler
+      - name: Create new isolated production D1 and schema
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request,urllib.error,sys
+          token=os.environ.get('CLOUDFLARE_API_TOKEN','');base='https://api.cloudflare.com/client/v4'
+          if not token: raise SystemExit('Missing CLOUDFLARE_API_TOKEN')
+          def call(method,path,payload=None):
+              req=urllib.request.Request(base+path,data=None if payload is None else json.dumps(payload).encode(),method=method,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r: status=r.status;data=json.load(r)
+              except urllib.error.HTTPError as e:
+                  status=e.code
+                  try: data=json.load(e)
+                  except Exception: data={}
+              codes=[x.get('code') for x in data.get('errors',[]) if isinstance(x,dict)]
+              print(method,path.split('?')[0].replace('/accounts/','/accounts/[account]/',1) if not path.startswith('/accounts/') else method+' account API', 'HTTP',status,'error codes',codes,flush=True)
+              if status//100!=2 or not data.get('success'):raise SystemExit('Cloudflare operation failed; no existing database is modified')
+              return data['result']
+          accounts=call('GET','/accounts?per_page=50')
+          if len(accounts)!=1:raise SystemExit('Account selection is ambiguous')
+          account=accounts[0]['id'];prefix='/accounts/'+account;run=os.environ['GITHUB_RUN_ID']
+          dbname='haruki-production-'+run;worker='haruki-production-'+run
+          dbs=call('GET',prefix+'/d1/database?per_page=100')
+          if any(x.get('name')==dbname for x in dbs):raise SystemExit('Database name already exists; refusing to modify it')
+          workers=call('GET',prefix+'/workers/scripts')
+          if any(x.get('id')==worker for x in workers):raise SystemExit('Worker name already exists; refusing to modify it')
+          db=call('POST',prefix+'/d1/database',{'name':dbname});dbid=db['uuid']
+          path=prefix+'/d1/database/'+dbid+'/query'
+          statements=['CREATE TABLE family_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, body TEXT)','INSERT INTO family_snapshot(id,revision,body) VALUES(1,0,NULL)','CREATE TABLE auth_limit (id INTEGER PRIMARY KEY CHECK(id=1), window INTEGER NOT NULL, count INTEGER NOT NULL)']
+          for sql in statements:
+              result=call('POST',path,{'sql':sql})
+              if not result or not all(x.get('success') for x in result):raise SystemExit('Schema initialization failed; new database retained for inspection')
+          result=call('POST',path,{'sql':'SELECT revision,body FROM family_snapshot WHERE id=1'})
+          if result[0]['results']!=[{'revision':0,'body':None}]:raise SystemExit('Unexpected initial data')
+          domain=call('GET',prefix+'/workers/subdomain')['subdomain']
+          config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'https://kota0317.github.io'},'d1_databases':[{'binding':'DB','database_name':dbname,'database_id':dbid}]}
+          open('wrangler.json','w').write(json.dumps(config))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_PROD_WORKER='+worker+'\nHQ_PROD_DB='+dbname+'\nHQ_PROD_API=https://'+worker+'.'+domain+'.workers.dev\n')
+          print('Prepared new empty production database:',dbname)
+          PY
+      - name: Deploy inactive production Worker
+        run: npx wrangler deploy
+      - name: Verify production API is inactive until family code is set
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,urllib.error
+          url=os.environ['HQ_PROD_API']+'/snapshot'
+          req=urllib.request.Request(url,headers={'Origin':'https://kota0317.github.io','User-Agent':'haruki-production-provisioning/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=20) as r: status=r.status;body=json.load(r)
+          except urllib.error.HTTPError as e:
+              status=e.code
+              try: body=json.load(e)
+              except Exception: body={}
+          print('Production Worker:',os.environ['HQ_PROD_WORKER'],'D1:',os.environ['HQ_PROD_DB'],'HTTP:',status,'error:',body.get('error'))
+          if status!=503 or body.get('error')!='not_configured' or body.get('code_configured') is not False:raise SystemExit('Worker inactive state not verified')
+          print('PASS: empty isolated D1 and inactive Worker; family code not installed')
+          PY
