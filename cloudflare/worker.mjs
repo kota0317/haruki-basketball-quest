@@ -1,7 +1,9 @@
 // Staging worker. Set FAMILY_CODE as a Worker secret; never commit a real code.
 const json=(value,status=200,origin='')=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origin,'Vary':'Origin','Access-Control-Allow-Headers':'Content-Type, X-Family-Code','Access-Control-Allow-Methods':'GET, PUT, OPTIONS'}});
 export default {async fetch(request,env){
- const origin=request.headers.get('Origin')||'';
+ const suppliedOrigin=request.headers.get('Origin')||'';
+ const sameOrigin=!suppliedOrigin&&request.headers.get('Sec-Fetch-Site')==='same-origin'&&new URL(request.url).origin===env.ALLOWED_ORIGIN;
+ const origin=suppliedOrigin|| (sameOrigin?env.ALLOWED_ORIGIN:'');
  if(!env.ALLOWED_ORIGIN||origin!==env.ALLOWED_ORIGIN)return json({error:'origin_denied'},403);
  if(request.method==='OPTIONS')return json({},200,origin);
  if(!env.DB||!/^\d{5}$/.test(env.FAMILY_CODE||''))return json({error:'not_configured',database:!!env.DB,code_configured:/^\d{5}$/.test(env.FAMILY_CODE||'')},503,origin);
