@@ -9,6 +9,13 @@
 - アカウントの D1 上限の引き上げ・プラン確認などで新規データベースを作成できる状態にする。既存データベースの削除・初期化は行わない。
 - `production-foundation.yml` は名前が重複するリソースの変更を拒み、新規 D1 のみにスキーマを作成する。再実行前に既に作成された Worker と混同しないよう、作成されたリソース名を記録する。
 
+## D1 上限と無料枠の調査（2026-11-20）
+
+- 読み取り専用の棚卸しで D1 は10件、Worker script は11件。Cloudflare Free の公表上限10件と一致し、新規作成は HTTP 403 / 7406（上限到達）で失敗した。API token に Billing Read がなく、現在の契約プランそのものはAPIでは確認できていない。
+- DB 全件と容量・作成日時・Worker binding・テーブル・スナップショット revision/body の長さを調査。[一覧とUUID](D1-INVENTORY-2026-11-20.md)
+- 無料枠内の本番候補は `haruki-sync-qa-44663546163`（UUID `31dc86e4-3cc5-42dc-a738-5a9a6259747f`）。Worker 未接続、`family_snapshot` と `auth_limit` のみ、revision 0 / NULL body。再確認を条件にこれを既存データに触れず本番 D1 として利用できる。削除済みDBが必要となる手順は採らない。
+- 現時点では D1 binding、DB 名変更、削除、初期化をしていない。契約確認には Cloudflare UI、または `Billing Read` 権限付き read-only token が必要。
+
 ## バックアップ
 
 1. ハルキの端末の本番アプリを開き、「GROWTH」→「管理・バックアップ」→「学習サマリー」→「記録をバックアップ」で JSON を保存する。
