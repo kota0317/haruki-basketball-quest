@@ -34,7 +34,8 @@ export default {async fetch(request,env){
  if(request.method!=='PUT')return json({error:'method_not_allowed'},405,origin);
  let raw=await request.text();if(raw.length>1000000)return json({error:'too_large'},413,origin);
  let input;try{input=JSON.parse(raw)}catch{return json({error:'invalid_json'},400,origin)}
- if(!input||!Number.isSafeInteger(input.revision)||input.revision<0||typeof input.generation!=='string'||!input.generation||input.generation.length>80||!input.data||typeof input.data!=='object'||Array.isArray(input.data)||Object.prototype.hasOwnProperty.call(input.data,GENERATION_KEY)||!Array.isArray(input.data.sessions)||!Array.isArray(input.data.answers)||!Array.isArray(input.data.matches)||!input.data.settings||typeof input.data.settings!=='object')return json({error:'invalid_data'},400,origin);
+ if(!input||!Number.isSafeInteger(input.revision)||input.revision<0||!input.data||typeof input.data!=='object'||Array.isArray(input.data)||Object.prototype.hasOwnProperty.call(input.data,GENERATION_KEY)||!Array.isArray(input.data.sessions)||!Array.isArray(input.data.answers)||!Array.isArray(input.data.matches)||!input.data.settings||typeof input.data.settings!=='object')return json({error:'invalid_data'},400,origin);
+ if(typeof input.generation!=='string'||!input.generation||input.generation.length>80)return json({error:'reset_generation_required'},428,origin);
  if(input.generation!==current.generation)return json({error:'reset_generation_changed'},409,origin);
  const stored={...input.data,[GENERATION_KEY]:current.generation};
  const r=await env.DB.prepare('UPDATE family_snapshot SET revision=revision+1,body=? WHERE id=1 AND revision=? RETURNING revision').bind(JSON.stringify(stored),input.revision).first();
