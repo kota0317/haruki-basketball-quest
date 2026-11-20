@@ -1,2 +1,1 @@
-// Staging deployment injects its own HTTPS Worker URL here. Empty disables sync.
-window.HQ_SYNC_API = '';
+window.HQ_SYNC_API = 'https://haruki-production-inactive-44733572133.schef07apremium-c.workers.dev';
