@@ -47,8 +47,6 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  for(const p of [a,b]){await p.evaluate(()=>go('MANAGE'));await p.evaluate(()=>hqSyncNow());await p.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent.includes('リセット世代'),null,{timeout:10000});}
  await a.evaluate(()=>{localStorage.setItem('hq-sync-queue-v1',JSON.stringify({version:1,operations:[{operation:{id:'stale',type:'stale'},status:'pending'}]}));localStorage.setItem('hq-sync-conflict-backup-old','old');});
  await a.evaluate(()=>hqResetDevice());
- await a.waitForTimeout(500);
- console.log('reset diagnostics',await a.locator('#syncStatus').innerText(),await a.evaluate(()=>({generation:JSON.parse(localStorage.getItem('hq-sync-meta-v1')||'null')?.generation,code:!!localStorage.getItem('hq-sync-code-v1'),state:Object.keys(s),remote:localStorage.getItem('hq-sync-queue-v1')})));
  await a.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
  assert.deepEqual(await a.evaluate(()=>({sessions:s.sessions.length,answers:s.answers.length,matches:s.matches.length,menus:s.questData.menus.length,completions:Object.keys(s.questData.completions).length,minutes:s.sessions.reduce((n,x)=>n+x.minutes,0),bonusXP:s.rpg.bonusXP,awards:Object.keys(s.rpg.awards).length,plays:s.rpg.plays.length,queue:localStorage.getItem('hq-sync-queue-v1'),conflict:localStorage.getItem('hq-sync-conflict-backup-old'),generation:JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation})),{sessions:0,answers:0,matches:0,menus:0,completions:0,minutes:0,bonusXP:0,awards:0,plays:0,queue:null,conflict:null,generation:newGeneration});
  await b.evaluate(()=>hqResetDevice());
