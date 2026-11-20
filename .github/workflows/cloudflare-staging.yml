@@ -91,8 +91,8 @@ jobs:
               with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
               if not out['success']:raise RuntimeError('Cloudflare request failed')
               return out['result']
-          name='haruki-mobile-preview-'+os.environ['GITHUB_RUN_ID']
-          dbid=post('/d1/database',{'name':name})['uuid']
+          db_name='haruki-mobile-preview-'+os.environ['GITHUB_RUN_ID']
+          dbid=post('/d1/database',{'name':db_name})['uuid']
           for statement in open('cloudflare/schema.sql').read().split(';'):
               if statement.strip():
                   result=post('/d1/database/'+dbid+'/query',{'sql':statement})
@@ -109,7 +109,7 @@ jobs:
           config=json.load(open('wrangler.json'))
           config['vars']['ALLOWED_ORIGIN']=os.environ['HQ_TEST_API']
           config['d1_databases'][0]['database_id']=dbid
-          config['d1_databases'][0]['database_name']=name
+          config['d1_databases'][0]['database_name']=db_name
           config['assets']={'directory':'./staging_assets','binding':'ASSETS','run_worker_first':['/snapshot']}
           open('wrangler.json','w').write(json.dumps(config))
           with open(os.environ['GITHUB_ENV'],'a') as f:f.write('HQ_MOBILE_PREVIEW='+os.environ['HQ_TEST_API']+'\n')
