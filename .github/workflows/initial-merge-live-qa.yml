@@ -90,3 +90,5 @@ jobs:
           PY
 
 # Verify matching device progress with the latest browser scenario.
+
+# Recheck the XP-source choice display against isolated synthetic D1.
