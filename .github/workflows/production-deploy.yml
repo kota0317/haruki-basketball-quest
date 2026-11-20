@@ -18,8 +18,7 @@ permissions:
   contents: read
 jobs:
   deploy:
-    # Execute only after the user explicitly approves production release.
-    if: github.ref == 'refs/heads/work/cloudflare-parent-sync'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/cloudflare-parent-sync'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment: haruki-production
@@ -54,11 +53,20 @@ jobs:
           settings=call(prefix+'/workers/scripts/'+worker+'/settings');bound=[x for x in settings['bindings'] if x.get('type')=='d1' and x.get('name')=='DB']
           if len(bound)>1 or (bound and (bound[0].get('database_id') or bound[0].get('id'))!=dbid):raise SystemExit('Worker is bound to a different database')
           rows=call(prefix+'/d1/database/'+dbid+'/query',{'sql':'SELECT revision,body FROM family_snapshot WHERE id=1'})
-          if not rows or rows[0].get('results')!=[{'revision':0,'body':None}]:raise SystemExit('Initial deployment requires a verified empty database; existing data was not changed')
+          if not rows or len(rows[0].get('results',[]))!=1:raise SystemExit('Expected one snapshot row')
+          snapshot=rows[0]['results'][0]
+          if snapshot.get('body') is None:
+              if int(snapshot['revision'])!=0:raise SystemExit('Unexpected empty snapshot revision; no data was changed')
+          else:
+              try:stored=json.loads(snapshot['body'])
+              except Exception:raise SystemExit('Snapshot is not valid JSON; no data was changed')
+              marker=stored.pop('__hq_sync_generation',None) if isinstance(stored,dict) else None
+              if not isinstance(marker,str) or not marker or stored:raise SystemExit('Refusing to deploy over existing learning data')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('EXPECTED_REVISION='+str(snapshot['revision'])+'\n')
           cfg={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'https://kota0317.github.io'},'d1_databases':[{'binding':'DB','database_name':name,'database_id':dbid}]}
           open('wrangler.json','w').write(json.dumps(cfg))
           with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\n')
-          print('Dedicated empty production D1 and Worker verified; family code present')
+          print('Dedicated production D1 and Worker verified; no learning data found; family code present')
           PY
       - name: Deploy Worker preserving existing secrets
         run: npx wrangler deploy --keep-vars
@@ -81,7 +89,7 @@ jobs:
               req=urllib.request.Request(url,headers={'Origin':'https://kota0317.github.io','X-Family-Code':os.environ['FAMILY_CODE'],'User-Agent':'haruki-production-verification/1.0'})
               try:
                   with urllib.request.urlopen(req,timeout=15) as r:result=json.load(r)
-                  if result=={'revision':0,'data':None}:break
+                  if result.get('data') is None and isinstance(result.get('generation'),str) and result.get('revision')==int(os.environ.get('EXPECTED_REVISION','0')):break
                   raise SystemExit('Unexpected snapshot content; no production data was changed')
               except urllib.error.HTTPError as e:print('API not ready: HTTP',e.code)
               time.sleep(4)
