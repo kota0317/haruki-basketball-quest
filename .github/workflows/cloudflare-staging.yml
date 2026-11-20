@@ -40,7 +40,7 @@ jobs:
           sub=request('GET','/accounts/'+account+'/workers/subdomain')['subdomain']
           config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'http://127.0.0.1:8798'},'d1_databases':[{'binding':'DB','database_name':name,'database_id':dbid}]}
           open('wrangler.json','w').write(json.dumps(config))
-          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_TEST_API=https://'+worker+'.'+sub+'.workers.dev\n')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_TEST_D1_ID='+dbid+'\nHQ_TEST_API=https://'+worker+'.'+sub+'.workers.dev\n')
           print('Isolated synthetic database created:',name)
           PY
       - name: Deploy synthetic staging Worker
@@ -64,3 +64,19 @@ jobs:
           PY
       - name: Verify two browsers against real Worker and D1
         run: CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
+      - name: Read back synthetic data directly from D1
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request
+          url='https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']+'/d1/database/'+os.environ['HQ_TEST_D1_ID']+'/query'
+          req=urllib.request.Request(url,data=json.dumps({'sql':'SELECT revision,body FROM family_snapshot WHERE id=1'}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
+          with urllib.request.urlopen(req,timeout=30) as response: payload=json.load(response)
+          assert payload['success'] and payload['result'][0]['success']
+          rows=payload['result'][0]['results'];assert len(rows)==1 and rows[0]['revision']>0
+          state=json.loads(rows[0]['body'])
+          assert any(x.get('title')=='親の変更' for x in state['questData']['menus'])
+          assert any(x.get('title')=='オフライン追加' and x.get('deleted') for x in state['questData']['menus'])
+          assert state['questData']['completions']
+          assert any(x.get('subject')=='実環境の検証' for x in state['sessions'])
+          print('PASS D1 direct readback: quest, tombstone, completion and learning history')
+          PY
