@@ -11,3 +11,10 @@ const proto=JSON.parse('{"__proto__":{"a":1}}');
 a=merge(proto,JSON.parse('{"__proto__":{"a":2}}'),JSON.parse('{"__proto__":{"a":1,"b":3}}'));
 assert.equal(a.conflicts.length,0);assert.equal(JSON.parse(JSON.stringify(a.value)).__proto__.a,2);assert.equal({}.a,undefined);
 console.log('PASS independent edits, conflicts, deletes, nulls, arrays and unsafe keys');
+
+const initial= require('./merge.js').initial;
+let m=initial({questData:{menus:{a:{id:'a',title:'数学'}},completions:{}},rpg:{bonusXP:10}}, {questData:{menus:{b:{id:'b',title:'国語'}},completions:{x:{xp:10}}},rpg:{bonusXP:0}});
+assert.deepEqual(Object.keys(m.value.questData.menus).sort(),['a','b']);assert.equal(m.value.rpg.bonusXP,10);assert.equal(m.blocked.length,0);
+m=initial({questData:{menus:{x:{id:'x',title:'A'}}}},{questData:{menus:{x:{id:'x',title:'B'}}}});assert.equal(m.menuConflicts.length,1);assert.equal(m.blocked.length,0);
+m=initial({rpg:{bonusXP:40},sessions:[{date:'1'}]},{rpg:{bonusXP:30},sessions:[{date:'2'}]});assert.equal(m.blocked.length,2);
+console.log('PASS initial union, conflicting IDs, and ambiguous XP/history protection');
