@@ -1,0 +1,74 @@
+name: Cloudflare isolated access verification
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: [.github/workflows/cloudflare-access-check.yml]
+permissions: {}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Verify permissions and isolated D1 CRUD
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.error, sys
+          token=os.environ.get('CF_TOKEN','')
+          if not token:
+              print('FAIL: CLOUDFLARE_API_TOKEN is absent or unavailable'); sys.exit(1)
+          base='https://api.cloudflare.com/client/v4'
+          def call(method,path,data=None):
+              payload=None if data is None else json.dumps(data).encode()
+              req=urllib.request.Request(base+path,data=payload,method=method,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as res: status=res.status; body=json.load(res)
+              except urllib.error.HTTPError as e:
+                  status=e.code
+                  try: body=json.load(e)
+                  except: body={}
+              except Exception as e:
+                  print('Network failure:', type(e).__name__); sys.exit(1)
+              return status,body
+          def check(label,method,path,data=None):
+              status,body=call(method,path,data)
+              codes=[e.get('code') for e in body.get('errors',[]) if isinstance(e,dict)]
+              print(label, 'HTTP',status,'success=',body.get('success'), 'error_codes=',codes,flush=True)
+              if status//100!=2 or not body.get('success'): sys.exit(1)
+              return body.get('result')
+          check('Token verification','GET','/user/tokens/verify')
+          account=os.environ.get('CF_ACCOUNT','').strip()
+          if not account:
+              accounts=check('List accessible accounts','GET','/accounts?per_page=50')
+              if len(accounts)!=1:
+                  print('FAIL: set CLOUDFLARE_ACCOUNT_ID secret; account selection is ambiguous'); sys.exit(1)
+              account=accounts[0]['id']
+          print('Account ID available (masked)')
+          print('::add-mask::'+account)
+          check('Workers list','GET','/accounts/'+account+'/workers/scripts')
+          check('D1 list','GET','/accounts/'+account+'/d1/database')
+          name='haruki-sync-verification-'+os.environ['GITHUB_RUN_ID']
+          db=check('Create isolated test D1','POST','/accounts/'+account+'/d1/database',{'name':name})
+          dbid=db.get('uuid')
+          if not dbid: print('FAIL: no database UUID'); sys.exit(1)
+          print('Test database:',name)
+          path='/accounts/'+account+'/d1/database/'+dbid+'/query'
+          def sql(label,q,expected=None):
+              result=check(label,'POST',path,{'sql':q})
+              if not isinstance(result,list) or not result or result[0].get('success') is False:
+                  print('FAIL: SQL response');sys.exit(1)
+              if expected is not None:
+                  rows=result[0].get('results',[])
+                  if rows!=expected: print('FAIL: unexpected test rows',rows);sys.exit(1)
+          sql('Create test table','CREATE TABLE verification (id INTEGER PRIMARY KEY, value TEXT NOT NULL)')
+          sql('INSERT',"INSERT INTO verification (id,value) VALUES (1,'before')")
+          sql('SELECT after insert','SELECT id,value FROM verification',[{'id':1,'value':'before'}])
+          sql('UPDATE',"UPDATE verification SET value='after' WHERE id=1")
+          sql('SELECT after update','SELECT id,value FROM verification',[{'id':1,'value':'after'}])
+          sql('DELETE','DELETE FROM verification WHERE id=1')
+          sql('SELECT after delete','SELECT id,value FROM verification',[])
+          print('PASS: isolated D1 CRUD. Test database retained for inspection.')
+          PY
