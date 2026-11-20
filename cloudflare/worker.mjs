@@ -4,7 +4,7 @@ export default {async fetch(request,env){
  const origin=request.headers.get('Origin')||'';
  if(!env.ALLOWED_ORIGIN||origin!==env.ALLOWED_ORIGIN)return json({error:'origin_denied'},403);
  if(request.method==='OPTIONS')return json({},200,origin);
- if(!env.DB||!/^\d{5}$/.test(env.FAMILY_CODE||''))return json({error:'not_configured'},503,origin);
+ if(!env.DB||!/^\d{5}$/.test(env.FAMILY_CODE||''))return json({error:'not_configured',database:!!env.DB,code_configured:/^\d{5}$/.test(env.FAMILY_CODE||'')},503,origin);
  const code=request.headers.get('X-Family-Code')||'';
  // Global fixed-window throttle is intentionally conservative and shared across devices.
  const minute=Math.floor(Date.now()/60000);
