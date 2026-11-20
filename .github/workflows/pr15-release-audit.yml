@@ -34,4 +34,5 @@ jobs:
           node tests/experience-browser.cjs
           node tests/rpg-browser.cjs
           node tests/opening-browser.cjs
+          node tests/backup-compare.cjs
           node tests/sync-integration.cjs
