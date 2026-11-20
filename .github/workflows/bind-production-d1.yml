@@ -1,0 +1,79 @@
+name: Bind verified empty D1 to inactive production Worker
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/bind-production-d1.yml']
+permissions:
+  contents: read
+jobs:
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts wrangler
+      - name: Verify exact empty production candidate and inactive Worker
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request
+          token=os.environ['CLOUDFLARE_API_TOKEN'];base='https://api.cloudflare.com/client/v4'
+          dbname='haruki-sync-qa-44663546163';dbid='31dc86e4-3cc5-42dc-a738-5a9a6259747f';worker='haruki-production-inactive-44733572133'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-production-d1-bind/1.0'})
+              with urllib.request.urlopen(req,timeout=30) as r:data=json.load(r)
+              if not data.get('success'):raise SystemExit('Cloudflare verification failed')
+              return data['result']
+          accounts=get('/accounts?per_page=50')
+          if len(accounts)!=1:raise SystemExit('Account selection ambiguous')
+          account=accounts[0]['id'];prefix='/accounts/'+account
+          db=get(prefix+'/d1/database/'+dbid)
+          if db.get('name')!=dbname:raise SystemExit('Candidate UUID/name mismatch')
+          scripts=get(prefix+'/workers/scripts')
+          if not any(x.get('id')==worker for x in scripts):raise SystemExit('Dedicated inactive production Worker not found')
+          settings=get(prefix+'/workers/scripts/'+worker+'/settings')
+          old=[x for x in settings.get('bindings',[]) if x.get('type')=='d1']
+          if old:raise SystemExit('Production Worker already has a D1 binding; refusing replacement')
+          req=urllib.request.Request(base+prefix+'/d1/database/'+dbid+'/query',data=json.dumps({'sql':"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"}).encode(),method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-production-d1-bind/1.0'})
+          with urllib.request.urlopen(req,timeout=30) as r:tables=json.load(r)['result'][0]['results']
+          names={x['name'] for x in tables}
+          if not {'family_snapshot','auth_limit'}.issubset(names):raise SystemExit('Expected schema missing; refusing change')
+          req=urllib.request.Request(base+prefix+'/d1/database/'+dbid+'/query',data=json.dumps({'sql':'SELECT revision,body FROM family_snapshot WHERE id=1'}).encode(),method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-production-d1-bind/1.0'})
+          with urllib.request.urlopen(req,timeout=30) as r:rows=json.load(r)['result'][0]['results']
+          if rows!=[{'revision':0,'body':None}]:raise SystemExit('D1 is no longer empty; refusing binding')
+          config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'https://kota0317.github.io'},'d1_databases':[{'binding':'DB','database_name':dbname,'database_id':dbid}]}
+          open('wrangler.json','w').write(json.dumps(config))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_PROD_WORKER='+worker+'\nHQ_PROD_DB='+dbname+'\nHQ_PROD_DB_ID='+dbid+'\n')
+          print('Verified only the designated empty D1 and inactive production Worker.')
+          PY
+      - name: Bind the existing D1 without setting family code
+        run: npx wrangler deploy --keep-vars
+      - name: Verify binding and API remains inactive
+        run: |
+          python3 - <<'PY'
+          import os,json,time,urllib.request,urllib.error
+          token=os.environ['CLOUDFLARE_API_TOKEN'];base='https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID'];worker=os.environ['HQ_PROD_WORKER']
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)['result']
+          bindings=get('/workers/scripts/'+worker+'/settings')['bindings'];found=[x for x in bindings if x.get('type')=='d1' and x.get('name')=='DB']
+          if len(found)!=1 or (found[0].get('database_id') or found[0].get('id'))!=os.environ['HQ_PROD_DB_ID']:raise SystemExit('Unexpected production binding')
+          domain=get('/workers/subdomain')['subdomain'];url='https://'+worker+'.'+domain+'.workers.dev/snapshot'
+          for n in range(12):
+              req=urllib.request.Request(url,headers={'Origin':'https://kota0317.github.io','User-Agent':'haruki-production-d1-bind/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=15) as r:status=r.status;data=json.load(r)
+              except urllib.error.HTTPError as e:
+                  status=e.code
+                  try:data=json.load(e)
+                  except Exception:data={}
+              if status==503 and data.get('error')=='not_configured' and data.get('database') is True and data.get('code_configured') is False:break
+              time.sleep(4)
+          else:raise SystemExit('Worker did not remain inactive after D1 binding')
+          print('PASS: existing empty D1 bound; API remains inactive without family code.')
+          PY
