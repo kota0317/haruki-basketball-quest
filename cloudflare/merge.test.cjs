@@ -29,3 +29,15 @@ m=initial({rpg:{bonusXP:5,awards:{'word:2026-11-20:enjp:1':true}}},{rpg:{bonusXP
 m=initial({rpg:{bonusXP:5,awards:{unknown:true}}},{rpg:{bonusXP:8,awards:{'sentence:2026-11-20:s1':true}}});assert.equal(m.blocked.length,1);assert.deepEqual(m.blocked[0].path,['rpg']);
 m=initial({questData:{completions:{bad:{id:'q',date:'2026-11-20',xp:10}}}},{questData:{completions:{}}});assert(m.hardErrors.length);
 console.log('PASS deletion retention, completion identity, XP provenance and unknown awards');
+
+const baseRpg={bonusXP:0,awards:{},plays:[]};
+const a5={bonusXP:5,awards:{'word:2026-11-20:enjp:1':true},plays:[]};
+const b5={bonusXP:5,awards:{'word:2026-11-20:enjp:2':true},plays:[]};
+let concurrent=merge({rpg:baseRpg},{rpg:a5},{rpg:b5});
+assert.equal(concurrent.conflicts.length,0);assert.equal(concurrent.value.rpg.bonusXP,10);assert.equal(Object.keys(concurrent.value.rpg.awards).length,2);
+concurrent=merge({rpg:baseRpg},{rpg:a5},{rpg:{bonusXP:8,awards:{'sentence:2026-11-20:s1':true},plays:[]}});
+assert.equal(concurrent.conflicts.length,0);assert.equal(concurrent.value.rpg.bonusXP,13);
+concurrent=merge({rpg:baseRpg},{rpg:a5},{rpg:{bonusXP:5,awards:{unknown:true},plays:[]}});
+assert.deepEqual(concurrent.conflicts.map(c=>c.path),[['rpg']]);
+assert.equal(concurrent.conflicts[0].remote.value.awards.unknown,true);
+console.log('PASS concurrent bonus awards are reconciled or require explicit choice');

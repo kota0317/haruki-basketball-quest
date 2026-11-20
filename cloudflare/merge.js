@@ -11,6 +11,22 @@
     return JSON.stringify(x);
   }
   const same=(a,b)=>stable(a)===stable(b);
+  function awardTotal(awards){
+    if(!isObject(awards))return null;
+    let total=0;
+    for(const [k,v] of Object.entries(awards)){
+      if(v!==true)return null;
+      if(/^word:\d{4}-\d{2}-\d{2}:(enjp|jpen):\d+$/.test(k))total+=5;
+      else if(/^(sentence|dialogue):\d{4}-\d{2}-\d{2}:.+$/.test(k))total+=8;
+      else if(/^reading:\d{4}-\d{2}-\d{2}:.+$/.test(k))total+=15;
+      else if(/^giant:.+$/.test(k))total+=20;
+      else return null;
+    }
+    return Number.isSafeInteger(total)?total:null;
+  }
+  function validAwardState(r){
+    return isObject(r)&&Number.isSafeInteger(r.bonusXP)&&r.bonusXP>=0&&awardTotal(r.awards)===r.bonusXP;
+  }
   function merge(base,local,remote) {
     const conflicts=[];
     function walk(b,l,r,path) {
@@ -33,6 +49,28 @@
       return l; // preview only; caller must not commit until conflicts are resolved
     }
     const value=walk(base,local,remote,[]);
+    // The award map is a set of unique events; the total is derived from the
+    // merged set, not merged independently as a scalar. Two different +5
+    // awards must produce +10 even when both devices report the same +5.
+    if(isObject(base?.rpg)&&isObject(local?.rpg)&&isObject(remote?.rpg)){
+      const changed=x=>!same({bonusXP:x.bonusXP,awards:x.awards},{bonusXP:base.rpg.bonusXP,awards:base.rpg.awards});
+      if(changed(local.rpg)||changed(remote.rpg)){
+        const affected=conflicts.some(x=>x.path[0]==='rpg'&&(x.path.length===1||x.path[1]==='awards'));
+        if(validAwardState(base.rpg)&&validAwardState(local.rpg)&&validAwardState(remote.rpg)&&!affected&&isObject(value?.rpg)){
+          const total=awardTotal(value.rpg.awards);
+          if(total!==null){
+            value.rpg.bonusXP=total;
+            for(let i=conflicts.length-1;i>=0;i--)if(conflicts[i].path[0]==='rpg'&&conflicts[i].path[1]==='bonusXP')conflicts.splice(i,1);
+          }
+        }else if(!same(local.rpg,remote.rpg)){
+          // Unknown provenance must not result in an unexplained total. Keep
+          // both whole records for explicit selection and conflict backup.
+          for(let i=conflicts.length-1;i>=0;i--)if(conflicts[i].path[0]==='rpg')conflicts.splice(i,1);
+          conflicts.push({path:['rpg'],base:{exists:true,value:base.rpg},local:{exists:true,value:local.rpg},remote:{exists:true,value:remote.rpg}});
+          value.rpg=local.rpg;
+        }
+      }
+    }
     return {value,conflicts};
   }
   // No common ancestor exists at first pairing. Only provably lossless unions
