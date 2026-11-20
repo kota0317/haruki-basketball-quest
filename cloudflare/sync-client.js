@@ -43,7 +43,7 @@
      }
     else if(empty(local)){next=remote.data;}
     else {initialDiff={local,remote:clone(remote.data),revision:remote.revision,generation,localSig,plan:HQMerge.initial(transformed(local),transformed(remote.data))};status('両方にデータがあります。内容を比較してください。初回同期は停止中です。');render();return;}
-   }else if(remote.data===null){status('クラウドが空のため同期を停止しました。端末の記録は保持しています。');return;}
+   }else if(remote.data===null){if(generation!=='initial'&&empty(meta?.base||{}))next=local;else{status('クラウドが空のため同期を停止しました。端末の記録は保持しています。');return}}
    else {
     const merged=HQMerge.merge(transformed(meta.base),transformed(local),transformed(remote.data));
     if(merged.conflicts.length){conflicts=merged.conflicts;conflictContext={local,remote:clone(remote.data),revision:remote.revision,generation,preview:merged.value,localSig};status('同時編集が見つかりました。内容を選択してください。');render();return;}
@@ -200,6 +200,7 @@
    fresh.rpg={bonusXP:0,awards:{},unlocked:{three:true},titles:{},plays:[],giantWins:0,settings:{motion:'full',sound:false,skip:false}};
    localStorage.setItem(KEY,JSON.stringify(fresh));
    for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key&&key.startsWith('hq-sync-')&&key!==authKey)localStorage.removeItem(key)}
+   storeMeta({base:fresh,revision:remote.revision,generation:remote.generation});
    s=fresh;match=null;initialDiff=null;conflictContext=null;conflicts=[];resetRequired=false;
    status('この端末の学習記録を初期化しました。同期を再開します。');render();if(code())schedule();
   }catch(e){status(e.status===401?'家族コードを確認してください。':'端末を初期化できませんでした（'+e.message+'）')}
