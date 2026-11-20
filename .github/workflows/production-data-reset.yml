@@ -1,0 +1,95 @@
+name: Reset production learning data safely
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Current D1 revision from the read-only check
+        required: true
+        type: string
+      confirmation:
+        description: Type RESET ALL LEARNING DATA to authorize this run
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: haruki-production-data-reset
+  cancel-in-progress: false
+jobs:
+  reset:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: haruki-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      FAMILY_CODE: ${{ secrets.HARUKI_FAMILY_CODE }}
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      WORKER_NAME: haruki-production-inactive-44733572133
+      DATABASE_NAME: haruki-sync-qa-44663546163
+      DATABASE_ID: 31dc86e4-3cc5-42dc-a738-5a9a6259747f
+      ALLOWED_ORIGIN: https://kota0317.github.io
+    steps:
+      - name: Verify exact target and reset intent
+        run: |
+          python3 - <<'PY'
+          import json, os, re, urllib.request, urllib.error, uuid
+          if os.environ.get('CONFIRMATION') != 'RESET ALL LEARNING DATA':
+              raise SystemExit('Confirmation phrase did not match; no database request was sent')
+          if not re.fullmatch(r'\d+', os.environ.get('EXPECTED_REVISION','')):
+              raise SystemExit('Expected revision must be a non-negative integer')
+          if not re.fullmatch(r'\d{5}', os.environ.get('FAMILY_CODE','')):
+              raise SystemExit('Production family code is not configured')
+          token=os.environ['CLOUDFLARE_API_TOKEN']; account_api='https://api.cloudflare.com/client/v4/accounts'
+          def request(url,payload=None,headers=None):
+              h={'Authorization':'Bearer '+token,'Content-Type':'application/json'}
+              if headers:h.update(headers)
+              req=urllib.request.Request(url,data=None if payload is None else json.dumps(payload).encode(),headers=h)
+              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+          def call(path,payload=None):
+              data=request(account_base+path,payload)
+              if not data.get('success'):raise SystemExit('Cloudflare API rejected the operation')
+              return data['result']
+          accounts=request(account_api+'?per_page=50')
+          if not accounts.get('success') or len(accounts.get('result',[]))!=1:
+              raise SystemExit('Cloudflare account selection was ambiguous')
+          account=accounts['result'][0]['id']; account_base=account_api+'/'+account
+          db=call('/d1/database/'+os.environ['DATABASE_ID'])
+          if db.get('name')!=os.environ['DATABASE_NAME']:raise SystemExit('D1 UUID/name mismatch; no data was changed')
+          settings=call('/workers/scripts/'+os.environ['WORKER_NAME']+'/settings')
+          bindings=[b for b in settings['bindings'] if b.get('type')=='d1' and b.get('name')=='DB']
+          if len(bindings)!=1 or (bindings[0].get('database_id') or bindings[0].get('id'))!=os.environ['DATABASE_ID']:
+              raise SystemExit('Production Worker is not bound to the specified D1; no data was changed')
+          def query(sql,params=None):
+              return call('/d1/database/'+os.environ['DATABASE_ID']+'/query',{'sql':sql,'params':params or []})
+          rows=query('SELECT revision, body FROM family_snapshot WHERE id=1')
+          if not rows or len(rows[0].get('results',[]))!=1:raise SystemExit('Expected exactly one snapshot row')
+          current=rows[0]['results'][0]; revision=int(current['revision'])
+          expected=int(os.environ['EXPECTED_REVISION'])
+          if revision!=expected:raise SystemExit('D1 revision changed; no data was changed. Re-run the read-only check.')
+          generation=str(uuid.uuid4())
+          marker=json.dumps({'__hq_sync_generation':generation},separators=(',',':'))
+          updated=query('UPDATE family_snapshot SET revision=revision+1, body=? WHERE id=1 AND revision=? RETURNING revision',[marker,expected])
+          if not updated or not updated[0].get('results') or len(updated[0]['results'])!=1:
+              raise SystemExit('Compare-and-swap reset did not update exactly one row')
+          new_revision=int(updated[0]['results'][0]['revision'])
+          verify=query('SELECT revision, body FROM family_snapshot WHERE id=1')
+          row=verify[0]['results'][0]; stored=json.loads(row['body'] or '{}')
+          if int(row['revision'])!=new_revision or stored!={'__hq_sync_generation':generation}:
+              raise SystemExit('D1 reset read-back failed')
+          if not re.fullmatch(r'\d{5}',os.environ['FAMILY_CODE']):raise SystemExit('Family code validation failed')
+          domain=call('/workers/subdomain')['subdomain']
+          api_url='https://'+os.environ['WORKER_NAME']+'.'+domain+'.workers.dev/snapshot'
+          req=urllib.request.Request(api_url,headers={'Origin':os.environ['ALLOWED_ORIGIN'],'X-Family-Code':os.environ['FAMILY_CODE'],'User-Agent':'haruki-clean-start-verification/1.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=20) as r: snapshot=json.load(r)
+          except urllib.error.HTTPError as e:
+              raise SystemExit('Authenticated Worker verification failed with HTTP '+str(e.code))
+          if snapshot!={'revision':new_revision,'generation':generation,'data':None}:
+              raise SystemExit('Worker/D1 generation read-back mismatch')
+          print('PASS: production D1 learning snapshot reset; generation advanced; authenticated Worker returns empty data')
+          print('Revision before: '+str(revision))
+          print('Revision after: '+str(new_revision))
+          print('D1 resource, table, Worker, secrets and app content were not deleted or recreated')
+          PY
