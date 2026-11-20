@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='haruki-static-v14';
+const CACHE='haruki-static-v15';
 const ASSETS=['./','index.html','style.css','game.js','eiken-words.js','eiken.js','app.js','quest-ui.js','reading.js','experience.js','rpg.js','opening.js','cloudflare/merge.js','cloudflare/sync-config.js','cloudflare/sync-client.js','assets/haruki-growth.webp','assets/haruki-action.webp','assets/haruki-three.webp','assets/haruki-spin.webp','assets/haruki-alley.webp'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('haruki-static-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
