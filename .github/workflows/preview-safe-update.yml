@@ -70,10 +70,10 @@ jobs:
           assert len(db)==1 and (db[0].get('database_id') or db[0].get('id'))==guard['dbid'],'Preview D1 binding changed'
           current=call('/d1/database/'+guard['dbid']+'/query',{'sql':'SELECT revision FROM family_snapshot WHERE id=1'})[0]['results'][0]['revision']
           if current!=guard['revision']:raise RuntimeError('Preview revision changed during deploy; check for concurrent use')
-          req=urllib.request.Request(guard['origin']+'/cloudflare/sync-client.js?v=3',headers={'User-Agent':'haruki-preview-deployer/1.0'})
+          req=urllib.request.Request(guard['origin']+'/cloudflare/sync-client.js?v=4',headers={'User-Agent':'haruki-preview-deployer/1.0'})
           for attempt in range(6):
               with urllib.request.urlopen(req,timeout=20) as r: text=r.read().decode()
-              if 'hq-initial-record-' in text:break
+              if 'awardSummary' in text:break
               time.sleep(3)
           else:raise RuntimeError('Updated client not visible')
           req=urllib.request.Request(guard['origin']+'/cloudflare/merge.js?v=3',headers={'User-Agent':'haruki-preview-deployer/1.0'})
