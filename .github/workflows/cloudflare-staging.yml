@@ -45,7 +45,7 @@ jobs:
           PY
       - name: Deploy synthetic staging Worker
         run: |
-          npx wrangler deploy
+          for attempt in 1 2 3; do npx wrangler deploy && break; [ "$attempt" -lt 3 ] || exit 1; sleep 8; done
           printf '12345' | npx wrangler secret put FAMILY_CODE
       - name: Wait for staging configuration
         run: |
