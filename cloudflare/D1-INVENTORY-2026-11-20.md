@@ -1,4 +1,4 @@
-# D1 free-tier inventory and safe reuse recommendation
+# D1 free-tier inventory and reuse outcome
 
 Inventory was performed with GitHub Actions using read-only Cloudflare API calls on 2026-11-20. The D1 query endpoint received SELECT statements only. No database or Worker configuration was changed by the inventory.
 
@@ -21,13 +21,13 @@ The four unattached D1 databases containing non-NULL snapshots have synthetic sy
 
 ## Free option
 
-The cleanest no-cost candidate is `haruki-sync-qa-44663546163` (UUID `31dc86e4-3cc5-42dc-a738-5a9a6259747f`): it is unattached, already has the compatible `family_snapshot` and `auth_limit` schema, revision 0, and a NULL body. Reusing it for production avoids deleting a database or creating another one. Keep the D1 name as-is until a separately reviewed naming change is needed. Before binding, rerun read-only checks for the same UUID, name, empty snapshot, expected tables and zero attached Workers. Never reset it. Its initially provisioned test purpose should be recorded as retired when it is formally assigned to production.
+The selected no-cost D1 is `haruki-sync-qa-44663546163` (UUID `31dc86e4-3cc5-42dc-a738-5a9a6259747f`). Immediately before binding, read-only checks confirmed the exact name/UUID, compatible `family_snapshot` and `auth_limit` tables, revision 0 and NULL body. It is now bound as `DB` to the dedicated Worker `haruki-production-inactive-44733572133`. Wrangler's deployment output and the Worker's live response confirm the binding; Cloudflare Settings API readback also reports the UUID. D1 remains empty. Its old QA purpose is retired; no other database was changed or deleted.
 
 An alternative is `haruki-sync-qa-44663412194` or `haruki-sync-qa-44663310113`; both are empty with the same schema, but currently remain bound to staging Workers and therefore should not be shared with production.
 
 ## Deletion and conversion impact
 
-No deletion is required if the empty, unattached candidate is reused. Deleting an attached D1 can break its Worker; deleting any nonempty snapshot removes the stored synthetic test state. No DB deletion, reset, rename, or rebinding has been performed. If a different DB is preferred, obtain approval for the specific database name and UUID first.
+No deletion was required. The chosen D1 was not reset or renamed, and no other D1 was deleted or rebound. Deleting an attached D1 can break its Worker; deleting any nonempty snapshot removes stored data.
 
 ## Billing and verification limits
 
