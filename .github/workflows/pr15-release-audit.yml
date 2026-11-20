@@ -1,0 +1,37 @@
+name: PR 15 release regression audit
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/pr15-release-audit.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Unit and sync safety tests
+        run: |
+          node tests/smoke.cjs
+          node tests/quest-unit.cjs
+          node tests/experience-unit.cjs
+          node tests/rpg-unit.cjs
+          node --test cloudflare/merge.test.cjs cloudflare/migration-preview.test.cjs cloudflare/offline-queue.test.cjs
+      - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core @fontsource/noto-sans-jp
+      - name: Browser regression and isolated restore
+        run: |
+          mkdir -p qa
+          python3 -m http.server 8792 --bind 127.0.0.1 > /tmp/haruki-regression.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid' EXIT
+          export CHROME_PATH=/usr/bin/google-chrome
+          node tests/quest-browser.cjs
+          node tests/local-persistence.cjs
+          node tests/experience-browser.cjs
+          node tests/rpg-browser.cjs
+          node tests/opening-browser.cjs
+          node tests/sync-integration.cjs
