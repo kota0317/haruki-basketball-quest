@@ -82,7 +82,7 @@ jobs:
           state=json.loads(rows[0]['body'])
           assert any(x.get('title')=='親の変更' for x in state['questData']['menus'])
           assert any(x.get('title')=='IE宿題' and x.get('deleted') is True for x in state['questData']['menus'])
-          assert state['rpg']['bonusXP']==5
+          assert state['rpg']['bonusXP']==15
           assert any(x.get('title')=='オフライン追加' and x.get('deleted') for x in state['questData']['menus'])
           assert state['questData']['completions']
           assert any(x.get('subject')=='実環境の検証' for x in state['sessions'])
