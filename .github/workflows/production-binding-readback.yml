@@ -1,0 +1,32 @@
+name: Read back production D1 binding
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['.github/workflows/production-binding-readback.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Read Worker binding and snapshot metadata
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request
+          base='https://api.cloudflare.com/client/v4';token=os.environ['CLOUDFLARE_API_TOKEN'];worker='haruki-production-inactive-44733572133';dbid='31dc86e4-3cc5-42dc-a738-5a9a6259747f';dbname='haruki-sync-qa-44663546163'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=20) as r:return json.load(r)['result']
+          acc=get('/accounts?per_page=50')
+          if len(acc)!=1:raise SystemExit('Account ambiguous')
+          a=acc[0]['id'];settings=get('/accounts/'+a+'/workers/scripts/'+worker+'/settings')
+          print('D1 bindings:',json.dumps([{'name':b.get('name'),'type':b.get('type'),'database_id':b.get('database_id'),'database_name':b.get('database_name'),'id':b.get('id')} for b in settings.get('bindings',[]) if b.get('type')=='d1']))
+          db=get('/accounts/'+a+'/d1/database/'+dbid)
+          if db.get('name')!=dbname:raise SystemExit('DB name mismatch')
+          req=urllib.request.Request(base+'/accounts/'+a+'/d1/database/'+dbid+'/query',data=json.dumps({'sql':'SELECT revision, length(body) AS body_bytes FROM family_snapshot WHERE id=1'}).encode(),method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+          with urllib.request.urlopen(req,timeout=20) as r:rows=json.load(r)['result'][0]['results']
+          print('Snapshot metadata:',json.dumps(rows))
+          PY
