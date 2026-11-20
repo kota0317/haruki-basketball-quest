@@ -1,5 +1,6 @@
 name: Read-only Cloudflare D1 inventory
 on:
+  workflow_dispatch:
   push:
     branches: [work/cloudflare-parent-sync]
     paths: ['.github/workflows/d1-readonly-inventory.yml']
