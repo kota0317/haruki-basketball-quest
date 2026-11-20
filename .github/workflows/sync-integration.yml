@@ -1,0 +1,20 @@
+name: Staging sync browser integration
+on:
+  push:
+    branches: [work/cloudflare-parent-sync]
+    paths: ['cloudflare/**', 'index.html', 'tests/sync-integration.cjs', '.github/workflows/sync-integration.yml']
+  pull_request:
+    paths: ['cloudflare/**', 'index.html', 'tests/sync-integration.cjs', '.github/workflows/sync-integration.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core
+      - run: CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
