@@ -47,5 +47,20 @@ jobs:
         run: |
           npx wrangler deploy
           printf '12345' | npx wrangler secret put FAMILY_CODE
+      - name: Wait for staging configuration
+        run: |
+          python3 - <<'PY'
+          import os,time,urllib.request,urllib.error,json
+          for i in range(12):
+              req=urllib.request.Request(os.environ['HQ_TEST_API']+'/snapshot',headers={'Origin':'http://127.0.0.1:8798','X-Family-Code':'12345'})
+              try:
+                  with urllib.request.urlopen(req,timeout=10) as response:
+                      if response.status==200: print('Staging API ready');break
+              except urllib.error.HTTPError as e:
+                  print('Not ready:',e.code,e.read(512).decode())
+              except Exception as e: print('Not ready:',type(e).__name__)
+              time.sleep(5)
+          else: raise SystemExit('Staging API did not become ready')
+          PY
       - name: Verify two browsers against real Worker and D1
         run: CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
