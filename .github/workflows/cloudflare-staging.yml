@@ -30,7 +30,7 @@ jobs:
               return data['result']
           accounts=request('GET','/accounts?per_page=50')
           if len(accounts)!=1:raise RuntimeError('Expected exactly one accessible account')
-          account=accounts[0]['id'];run=os.environ['GITHUB_RUN_ID'];name='haruki-sync-qa-'+run
+          account=accounts[0]['id'];run=os.environ['GITHUB_RUN_ID'];name='haruki-sync-qa-'+run;worker='haruki-sync-qa-44663139065'
           db=request('POST','/accounts/'+account+'/d1/database',{'name':name});dbid=db['uuid']
           query='/accounts/'+account+'/d1/database/'+dbid+'/query'
           for statement in open('cloudflare/schema.sql').read().split(';'):
@@ -38,9 +38,9 @@ jobs:
                   out=request('POST',query,{'sql':statement})
                   if any(not x.get('success') for x in out):raise RuntimeError('Schema setup failed')
           sub=request('GET','/accounts/'+account+'/workers/subdomain')['subdomain']
-          config={'name':name,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'http://127.0.0.1:8798'},'d1_databases':[{'binding':'DB','database_name':name,'database_id':dbid}]}
+          config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':'http://127.0.0.1:8798'},'d1_databases':[{'binding':'DB','database_name':name,'database_id':dbid}]}
           open('wrangler.json','w').write(json.dumps(config))
-          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_TEST_API=https://'+name+'.'+sub+'.workers.dev\n')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('CLOUDFLARE_ACCOUNT_ID='+account+'\nHQ_TEST_API=https://'+worker+'.'+sub+'.workers.dev\n')
           print('Isolated synthetic database created:',name)
           PY
       - name: Deploy synthetic staging Worker
