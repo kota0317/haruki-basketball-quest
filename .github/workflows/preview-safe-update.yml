@@ -47,7 +47,7 @@ jobs:
           root=pathlib.Path('staging_assets');root.mkdir()
           for filename in ['index.html','style.css','game.js','eiken-words.js','eiken.js','app.js','quest-ui.js','reading.js','experience.js','rpg.js','opening.js','sw.js']:shutil.copy2(filename,root/filename)
           shutil.copytree('assets',root/'assets');(root/'cloudflare').mkdir()
-          for filename in ['merge.js','sync-client.js']:shutil.copy2('cloudflare/'+filename,root/'cloudflare'/filename)
+          for filename in ['merge.js','sync-client.js','migration-preview.js','backup-compare.html']:shutil.copy2('cloudflare/'+filename,root/'cloudflare'/filename)
           (root/'cloudflare'/'sync-config.js').write_text('window.HQ_SYNC_API=location.origin;')
           index=root/'index.html';index.write_text(index.read_text().replace('<body>','<body><div style="background:#b91c1c;color:white;padding:12px;text-align:center;font-weight:bold">検証版：実際の学習記録を入力しないでください</div>'))
           config={'name':worker,'main':'cloudflare/worker.mjs','compatibility_date':'2026-11-01','account_id':account,'workers_dev':True,'vars':{'ALLOWED_ORIGIN':origin},'d1_databases':[{'binding':'DB','database_name':expected,'database_id':dbid}],'assets':{'directory':'./staging_assets','binding':'ASSETS','run_worker_first':['/snapshot']}}
@@ -70,14 +70,14 @@ jobs:
           assert len(db)==1 and (db[0].get('database_id') or db[0].get('id'))==guard['dbid'],'Preview D1 binding changed'
           current=call('/d1/database/'+guard['dbid']+'/query',{'sql':'SELECT revision FROM family_snapshot WHERE id=1'})[0]['results'][0]['revision']
           if current!=guard['revision']:raise RuntimeError('Preview revision changed during deploy; check for concurrent use')
-          req=urllib.request.Request(guard['origin']+'/cloudflare/sync-client.js?v=4',headers={'User-Agent':'haruki-preview-deployer/1.0'})
+          req=urllib.request.Request(guard['origin']+'/cloudflare/sync-client.js?v=5',headers={'User-Agent':'haruki-preview-deployer/1.0'})
           for attempt in range(6):
               with urllib.request.urlopen(req,timeout=20) as r: text=r.read().decode()
               if 'awardSummary' in text:break
               time.sleep(3)
           else:raise RuntimeError('Updated client not visible')
-          req=urllib.request.Request(guard['origin']+'/cloudflare/merge.js?v=3',headers={'User-Agent':'haruki-preview-deployer/1.0'})
+          req=urllib.request.Request(guard['origin']+'/cloudflare/merge.js?v=4',headers={'User-Agent':'haruki-preview-deployer/1.0'})
           with urllib.request.urlopen(req,timeout=20) as r: text=r.read().decode()
-          assert 'calcAwards' in text, 'Updated XP provenance logic is not visible'
+          assert 'awardTotal' in text, 'Updated XP provenance logic is not visible'
           print('PASS: updated preview, unchanged D1 binding and unchanged revision')
           PY
