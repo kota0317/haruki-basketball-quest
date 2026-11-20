@@ -38,7 +38,8 @@ jobs:
           if not any(x.get('id')==worker for x in scripts):raise SystemExit('Dedicated inactive production Worker not found')
           settings=get(prefix+'/workers/scripts/'+worker+'/settings')
           old=[x for x in settings.get('bindings',[]) if x.get('type')=='d1']
-          if old:raise SystemExit('Production Worker already has a D1 binding; refusing replacement')
+          if old and not (len(old)==1 and old[0].get('name')=='DB' and (old[0].get('database_name')==dbname or old[0].get('database_id')==dbid or old[0].get('id')==dbid)):
+              raise SystemExit('Production Worker has an unexpected D1 binding; refusing replacement')
           req=urllib.request.Request(base+prefix+'/d1/database/'+dbid+'/query',data=json.dumps({'sql':"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"}).encode(),method='POST',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'haruki-production-d1-bind/1.0'})
           with urllib.request.urlopen(req,timeout=30) as r:tables=json.load(r)['result'][0]['results']
           names={x['name'] for x in tables}
