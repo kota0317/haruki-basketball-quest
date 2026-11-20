@@ -82,3 +82,5 @@ jobs:
           assert any(x.get('subject')=='実環境の検証' for x in state['sessions'])
           print('PASS D1 direct readback: quest, tombstone, completion and learning history')
           PY
+
+# Verify matching device progress with the latest browser scenario.
