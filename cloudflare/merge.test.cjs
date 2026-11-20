@@ -13,8 +13,19 @@ assert.equal(a.conflicts.length,0);assert.equal(JSON.parse(JSON.stringify(a.valu
 console.log('PASS independent edits, conflicts, deletes, nulls, arrays and unsafe keys');
 
 const initial= require('./merge.js').initial;
-let m=initial({questData:{menus:{a:{id:'a',title:'数学'}},completions:{}},rpg:{bonusXP:10}}, {questData:{menus:{b:{id:'b',title:'国語'}},completions:{x:{xp:10}}},rpg:{bonusXP:0}});
+let m=initial({questData:{menus:{a:{id:'a',title:'数学'}},completions:{}},rpg:{bonusXP:10,awards:{'word:2026-11-20:enjp:1':true,'word:2026-11-20:jpen:1':true}}}, {questData:{menus:{b:{id:'b',title:'国語'}},completions:{'t@2026-11-20':{id:'t',date:'2026-11-20',xp:10}}},rpg:{bonusXP:0,awards:{}}});
 assert.deepEqual(Object.keys(m.value.questData.menus).sort(),['a','b']);assert.equal(m.value.rpg.bonusXP,10);assert.equal(m.blocked.length,0);
 m=initial({questData:{menus:{x:{id:'x',title:'A'}}}},{questData:{menus:{x:{id:'x',title:'B'}}}});assert.equal(m.menuConflicts.length,1);assert.equal(m.blocked.length,0);
 m=initial({rpg:{bonusXP:40},sessions:[{date:'1'}]},{rpg:{bonusXP:30},sessions:[{date:'2'}]});assert.equal(m.blocked.length,2);
 console.log('PASS initial union, conflicting IDs, and ambiguous XP/history protection');
+
+const done={'q@2026-11-20':{id:'q',date:'2026-11-20',title:'国語',xp:10}};
+m=initial({questData:{menus:{d:{id:'d',deleted:true}},completions:{}} ,rpg:{bonusXP:0,awards:{}}},{questData:{menus:{q:{id:'q'}},completions:done},rpg:{bonusXP:5,awards:{'word:2026-11-20:enjp:1':true}}});
+assert.equal(m.value.questData.menus.d.deleted,true);assert.equal(m.value.questData.completions['q@2026-11-20'].xp,10);assert.equal(m.value.rpg.bonusXP,5);assert.equal(m.blocked.length,0);assert.equal(m.hardErrors.length,0);
+m=initial({questData:{completions:done}},{questData:{completions:done}});assert.equal(Object.keys(m.value.questData.completions).length,1);
+m=initial({questData:{completions:done}},{questData:{completions:{'q@2026-11-20':{id:'q',date:'2026-11-20',title:'国語',xp:20}}}});assert.equal(m.blocked.length,1);
+m=initial({rpg:{bonusXP:5,awards:{'word:2026-11-20:enjp:1':true}}},{rpg:{bonusXP:5,awards:{'word:2026-11-20:enjp:2':true}}});assert.equal(m.value.rpg.bonusXP,10);assert.equal(m.blocked.length,0);
+m=initial({rpg:{bonusXP:5,awards:{'word:2026-11-20:enjp:1':true}}},{rpg:{bonusXP:13,awards:{'word:2026-11-20:enjp:1':true,'sentence:2026-11-20:s1':true}}});assert.equal(m.value.rpg.bonusXP,13);
+m=initial({rpg:{bonusXP:5,awards:{unknown:true}}},{rpg:{bonusXP:8,awards:{'sentence:2026-11-20:s1':true}}});assert.equal(m.blocked.length,1);assert.deepEqual(m.blocked[0].path,['rpg']);
+m=initial({questData:{completions:{bad:{id:'q',date:'2026-11-20',xp:10}}}},{questData:{completions:{}}});assert(m.hardErrors.length);
+console.log('PASS deletion retention, completion identity, XP provenance and unknown awards');
