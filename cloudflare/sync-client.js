@@ -2,7 +2,7 @@
 'use strict';
 (function(){
  const authKey='hq-sync-code-v1', metaKey='hq-sync-meta-v1';
- let busy=false, timer=null, message='', conflicts=[], conflictContext=null, initialDiff=null;
+ let busy=false, timer=null, message='', conflicts=[], conflictContext=null, initialDiff=null, resetRequired=false;
  const clone=x=>JSON.parse(JSON.stringify(x));
  const api=()=>window.HQ_SYNC_API;
  const readMeta=()=>{try{return JSON.parse(localStorage.getItem(metaKey)||'null')}catch{return null}};
@@ -28,38 +28,40 @@
   if(r.settings&&(r.settings.motion!=='full'||r.settings.sound!==false||r.settings.skip!==false||Object.keys(r.settings).some(k=>!['motion','sound','skip'].includes(k))))return false;
   return !state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!r.bonusXP&&!Object.keys(r.awards||{}).length&&!Object.keys(r.unlocked||{}).filter(k=>k!=='three'||r.unlocked[k]!==true).length&&!Object.keys(r.titles||{}).length&&!(r.plays||[]).length&&!r.giantWins;
  }
- async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await res.json();if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;throw e}return data}
+ async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await res.json();if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;throw e}return data}
  function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text}
  async function sync(){
-  if(busy||conflictContext||initialDiff||!code()||!api()||storageBlocked)return;busy=true;
+  if(busy||conflictContext||initialDiff||resetRequired||!code()||!api()||storageBlocked)return;busy=true;
   try{
-   status('同期を確認中…');const remote=await req('GET');let meta=readMeta();const local=clone(s), localSig=signature(local);let next;
+   status('同期を確認中…');const remote=await req('GET'),generation=remote.generation||'initial';let meta=readMeta();const local=clone(s), localSig=signature(local);let next;
+   if((meta?.generation||'initial')!==generation){resetRequired=true;status('本番のリセット世代が変わりました。この端末の初期化後に同期できます。');return}
+   if(!meta&&generation!=='initial'&&!empty(local)){resetRequired=true;status('本番データは初期化済みですが、この端末に古い記録があります。端末初期化後に同期してください。');return}
    if(!meta){
     if(remote.data===null){
       if(empty(local)){next=local;}
       else {status('この端末に既存の学習記録が見つかりました。空のクラウドへの初回同期は停止しました。端末の記録は保持されています。内容を確認してください。');return;}
      }
     else if(empty(local)){next=remote.data;}
-    else {initialDiff={local,remote:clone(remote.data),revision:remote.revision,localSig,plan:HQMerge.initial(transformed(local),transformed(remote.data))};status('両方にデータがあります。内容を比較してください。初回同期は停止中です。');render();return;}
+    else {initialDiff={local,remote:clone(remote.data),revision:remote.revision,generation,localSig,plan:HQMerge.initial(transformed(local),transformed(remote.data))};status('両方にデータがあります。内容を比較してください。初回同期は停止中です。');render();return;}
    }else if(remote.data===null){status('クラウドが空のため同期を停止しました。端末の記録は保持しています。');return;}
    else {
     const merged=HQMerge.merge(transformed(meta.base),transformed(local),transformed(remote.data));
-    if(merged.conflicts.length){conflicts=merged.conflicts;conflictContext={local,remote:clone(remote.data),revision:remote.revision,preview:merged.value,localSig};status('同時編集が見つかりました。内容を選択してください。');render();return;}
+    if(merged.conflicts.length){conflicts=merged.conflicts;conflictContext={local,remote:clone(remote.data),revision:remote.revision,generation,preview:merged.value,localSig};status('同時編集が見つかりました。内容を選択してください。');render();return;}
     next=untransform(merged.value);
    }
    if(!validState(next))throw Error('同期データの形式が不正です');
    let revision=remote.revision;
-   if(signature(next)!==signature(remote.data)) {const result=await req('PUT',{revision,data:next});revision=result.revision;}
+   if(signature(next)!==signature(remote.data)) {const result=await req('PUT',{revision,generation,data:next});revision=result.revision;}
    // A local edit during the request must not be overwritten.
    if(signature(s)!==localSig){
     const pending=HQMerge.merge(transformed(local),transformed(s),transformed(next));
     if(pending.conflicts.length){conflicts=pending.conflicts;conflictContext=null;status('同期中の変更が競合しました。再確認してください。');schedule();return;}
     const combined=untransform(pending.value);if(!validState(combined))throw Error('同期データの形式が不正です');
-    localStorage.setItem(KEY,JSON.stringify(combined));storeMeta({base:next,revision});s=combined;match=s.activeMatch||null;status('端末の新しい変更を再送します');schedule();return;
+    localStorage.setItem(KEY,JSON.stringify(combined));storeMeta({base:next,revision,generation});s=combined;match=s.activeMatch||null;status('端末の新しい変更を再送します');schedule();return;
    }
    // Persist before changing memory; any quota failure leaves the original untouched.
-   localStorage.setItem(KEY,JSON.stringify(next));storeMeta({base:next,revision});s=next;match=s.activeMatch||null;conflicts=[];conflictContext=null;initialDiff=null;status('同期済み');render();
-  }catch(e){status(e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule()}
+   localStorage.setItem(KEY,JSON.stringify(next));storeMeta({base:next,revision,generation});s=next;match=s.activeMatch||null;conflicts=[];conflictContext=null;initialDiff=null;status('同期済み');render();
+  }catch(e){status(e.code==='reset_generation_changed'?'リセット世代が変わりました。端末初期化後に同期できます。':e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule()}
   finally{busy=false}
  }
  function schedule(){clearTimeout(timer);timer=setTimeout(sync,1200)}
@@ -82,7 +84,7 @@
   busy=true;
   try{
    const remote=await req('GET');
-   if(remote.revision!==ctx.revision||signature(remote.data)!==signature(ctx.remote)){status('相手の変更が更新されました。再確認してください。');conflictContext=null;conflicts=[];return}
+   if(remote.revision!==ctx.revision||(remote.generation||'initial')!==ctx.generation||signature(remote.data)!==signature(ctx.remote)){status('相手の変更が更新されました。再確認してください。');conflictContext=null;conflicts=[];return}
    let selected=clone(ctx.preview);
    for(let i=0;i<conflicts.length;i++){
     const row=conflicts[i],side=row[choices[i]];
@@ -97,9 +99,9 @@
    }
    const resolved=untransform(selected);if(!validState(resolved))throw Error('選択結果の形式が不正です');
    localStorage.setItem('hq-sync-conflict-backup-'+crypto.randomUUID(),JSON.stringify({time:new Date().toISOString(),local:ctx.local,remote:ctx.remote,conflicts}));
-   const result=await req('PUT',{revision:remote.revision,data:resolved});
+   const result=await req('PUT',{revision:remote.revision,generation:ctx.generation,data:resolved});
    if(signature(s)!==ctx.localSig){conflictContext=null;conflicts=[];status('同期中に端末の記録が変わりました。再確認します。');schedule();return}
-   localStorage.setItem(KEY,JSON.stringify(resolved));storeMeta({base:resolved,revision:result.revision});s=resolved;match=s.activeMatch||null;conflictContext=null;conflicts=[];status('競合を解決して同期しました');render();
+   localStorage.setItem(KEY,JSON.stringify(resolved));storeMeta({base:resolved,revision:result.revision,generation:ctx.generation});s=resolved;match=s.activeMatch||null;conflictContext=null;conflicts=[];status('競合を解決して同期しました');render();
   }catch(e){status(e.status===409?'相手の変更が更新されました。再確認してください。':'解決できませんでした。両方の記録は保持されています（'+e.message+'）')}
   finally{busy=false;if(!conflictContext&&conflicts.length===0&&message.includes('再確認'))schedule()}
  };
@@ -118,7 +120,7 @@
   busy=true;
   try{
    const latest=await req('GET');
-   if(latest.revision!==ctx.revision||signature(latest.data)!==signature(ctx.remote)){initialDiff=null;status('相手の記録が変わりました。比較し直します。');return}
+   if(latest.revision!==ctx.revision||(latest.generation||'initial')!==ctx.generation||signature(latest.data)!==signature(ctx.remote)){initialDiff=null;status('相手の記録が変わりました。比較し直します。');return}
    const selected=clone(ctx.plan.value);
    for(let i=0;i<ctx.plan.menuConflicts.length;i++){
     const row=ctx.plan.menuConflicts[i],id=row.path[2];
@@ -134,10 +136,10 @@
    // Save both originals before attempting any remote or local write. A quota
    // error aborts, and the backup remains available even if the request fails.
    localStorage.setItem('hq-sync-initial-backup-'+crypto.randomUUID(),JSON.stringify({time:new Date().toISOString(),local:ctx.local,remote:ctx.remote}));
-   const saved=await req('PUT',{revision:latest.revision,data:joined});
+   const saved=await req('PUT',{revision:latest.revision,generation:ctx.generation,data:joined});
    if(signature(s)!==ctx.localSig){initialDiff=null;status('同期中に端末の記録が変わりました。比較し直します。');return}
-   localStorage.setItem(KEY,JSON.stringify(joined));storeMeta({base:joined,revision:saved.revision});s=joined;match=s.activeMatch||null;initialDiff=null;status('両方のメニューを残して同期しました');render();
-  }catch(e){if(e.status===409){initialDiff=null;status('相手の記録が変わりました。比較し直します。')}else status('統合できませんでした。両方の記録は保持されています（'+e.message+'）')}
+   localStorage.setItem(KEY,JSON.stringify(joined));storeMeta({base:joined,revision:saved.revision,generation:ctx.generation});s=joined;match=s.activeMatch||null;initialDiff=null;status('両方のメニューを残して同期しました');render();
+  }catch(e){if(e.code==='reset_generation_changed'){resetRequired=true;initialDiff=null;status('本番のリセット世代が変わりました。端末初期化後に同期できます。')}else if(e.status===409){initialDiff=null;status('相手の記録が変わりました。比較し直します。')}else status('統合できませんでした。両方の記録は保持されています（'+e.message+'）')}
   finally{busy=false;if(!initialDiff&&message.includes('比較し直します'))schedule()}
  };
  function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);if(cls)node.className=cls;return node}
@@ -178,6 +180,31 @@
  }
 
  window.hqConflictDownload=function(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({conflicts,local:s,base:readMeta()?.base},null,2)],{type:'application/json'}));a.download='haruki-sync-conflicts.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
- const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>記録がある端末で初回統合する場合は、双方のバックアップを保存してから進めてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app)};
+ window.hqResetDevice=async function(){
+  if(busy){alert('同期処理が終わってから実行してください');return}
+  if(!api()){alert('同期サーバーが設定されていません');return}
+  const typed=document.getElementById('hqCode')?.value||'',candidate=code()||typed;
+  if(!/^[0-9]{5}$/.test(candidate)){alert('家族コードを入力してください');return}
+  if(!code())localStorage.setItem(authKey,candidate);
+  busy=true;clearTimeout(timer);
+  try{
+   const remote=await req('GET');
+   if(!remote.generation||remote.generation==='initial'||(remote.data!==null&&!empty(remote.data))){
+    status('本番D1の初期化後、まだ新しい学習記録を追加していない状態で実行してください。');return
+   }
+   const ok=confirm('この端末の学習メニュー、完了履歴、学習時間・回答、英検進捗、XP・レベル、試合・ゲーム進捗、競合情報と未送信同期キューを削除します。教材・問題データとアプリ設定は残ります。元に戻せません。続けますか？');
+   if(!ok){status('端末初期化をキャンセルしました');return}
+   const fresh=emptyState();
+   fresh.questData={menus:[],completions:{}};
+   fresh.eikenDaily={days:{}};
+   fresh.rpg={bonusXP:0,awards:{},unlocked:{three:true},titles:{},plays:[],giantWins:0,settings:{motion:'full',sound:false,skip:false}};
+   localStorage.setItem(KEY,JSON.stringify(fresh));
+   for(let i=localStorage.length-1;i>=0;i--){const key=localStorage.key(i);if(key&&key.startsWith('hq-sync-')&&key!==authKey)localStorage.removeItem(key)}
+   s=fresh;match=null;initialDiff=null;conflictContext=null;conflicts=[];resetRequired=false;
+   status('この端末の学習記録を初期化しました。同期を再開します。');render();if(code())schedule();
+  }catch(e){status(e.status===401?'家族コードを確認してください。':'端末を初期化できませんでした（'+e.message+'）')}
+  finally{busy=false}
+ };
+ const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>記録がある端末で初回統合する場合は、双方のバックアップを保存してから進めてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);app.insertAdjacentHTML('beforeend',card('<h3>クリーンスタート</h3><p>本番D1を初期化した後、親・ハルキそれぞれの端末でこの操作を行ってください。家族コードと教材・問題データは残ります。</p><button class="secondary" onclick="hqResetDevice()">この端末の学習データを初期化</button>'))};
  window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);if(code())schedule();
 })();
