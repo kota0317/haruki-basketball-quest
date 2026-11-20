@@ -3,6 +3,14 @@ on:
   push:
     branches: [work/cloudflare-parent-sync]
     paths: ['.github/workflows/pr15-release-audit.yml']
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/pr15-release-audit.yml'
+      - 'cloudflare/**'
+      - 'tests/**'
+      - 'index.html'
+      - 'sw.js'
 permissions:
   contents: read
 jobs:
