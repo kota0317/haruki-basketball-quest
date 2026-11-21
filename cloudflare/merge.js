@@ -68,8 +68,11 @@
         return out;
       }
       if(same(l,r))return l;
-      if(same(l,b))return r;
-      if(same(r,b))return l;
+      // Recurse through the root and questData container even when one side
+      // equals the base, so completion IDs can be unioned at their map path.
+      const completionAncestor=path.length===0||(path.length===1&&path[0]==='questData');
+      if(same(l,b)&&!completionAncestor)return r;
+      if(same(r,b)&&!completionAncestor)return l;
       if(path.length===1&&path[0]==='learningEvents'&&Array.isArray(b)&&Array.isArray(l)&&Array.isArray(r)){
         const merged=mergeLearningEvents(l,r);
         if(merged)return merged;
