@@ -41,7 +41,7 @@
    if(rawQueue!==null){try{const queue=JSON.parse(rawQueue);hasPendingQueue=!queue||!Array.isArray(queue.operations)||queue.operations.length>0}catch{hasPendingQueue=true}}
    let adoptedGeneration=false;
    if(generationMismatch){
-    if(empty(local)&&!hasPendingQueue){next=remote.data===null?local:remote.data;adoptedGeneration=true}
+    if(empty(local)&&(!meta||(!!meta.base&&empty(meta.base)))&&!hasPendingQueue){next=remote.data===null?local:remote.data;adoptedGeneration=true}
     else{resetRequired=true;status(hasPendingQueue?'リセット世代が変わりました。未送信データを保持するため同期を停止しました。バックアップを保存して内容を確認してください。':'本番のリセット世代が変わりました。この端末に学習記録があるため同期を停止しました。記録を保持しています。');return}
    }
    if(!adoptedGeneration&&!meta&&generation!=='initial'&&!empty(local)){resetRequired=true;status('本番データは初期化済みですが、この端末に古い記録があります。端末初期化後に同期してください。');return}
