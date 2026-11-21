@@ -71,10 +71,10 @@
    }
    // Persist before changing memory; any quota failure leaves the original untouched.
    localStorage.setItem(KEY,JSON.stringify(next));storeMeta({base:next,revision,generation,syncedAt:new Date().toISOString()});s=next;match=s.activeMatch||null;conflicts=[];conflictContext=null;initialDiff=null;status('同期済み');render();
-  }catch(e){status(e.code==='reset_generation_changed'?'リセット世代が変わりました。端末初期化後に同期できます。':e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule()}
+  }catch(e){status(e.code==='reset_generation_changed'?'リセット世代が変わりました。端末初期化後に同期できます。':e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule();else if(e.status===429)schedule(30000);else if(!e.status||e.status>=500)schedule(10000)}
   finally{busy=false}
  }
- function schedule(){clearTimeout(timer);timer=setTimeout(()=>{if(busy){schedule();return}sync()},1200)}
+ function schedule(delay=1200){clearTimeout(timer);timer=setTimeout(()=>{if(busy){schedule(delay);return}sync()},delay)}
  const previousSave=save;save=function(){const ok=previousSave();if(ok&&code())schedule();return ok};
  window.hqSyncEnable=async function(){
   if(!api()){alert('同期サーバーはまだ設定されていません。');return}
