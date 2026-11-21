@@ -35,9 +35,17 @@
   if(busy||conflictContext||initialDiff||resetRequired||!code()||!api()||storageBlocked)return;busy=true;
   try{
    status('同期を確認中…');const remote=await req('GET'),generation=remote.generation||'initial';let meta=readMeta();const local=clone(s), localSig=signature(local);let next;
-   if((meta?.generation||'initial')!==generation){resetRequired=true;status('本番のリセット世代が変わりました。この端末の初期化後に同期できます。');return}
-   if(!meta&&generation!=='initial'&&!empty(local)){resetRequired=true;status('本番データは初期化済みですが、この端末に古い記録があります。端末初期化後に同期してください。');return}
-   if(!meta){
+   const generationMismatch=(meta?.generation||'initial')!==generation;
+   const rawQueue=localStorage.getItem('hq-sync-queue-v1');
+   let hasPendingQueue=false;
+   if(rawQueue!==null){try{const queue=JSON.parse(rawQueue);hasPendingQueue=!queue||!Array.isArray(queue.operations)||queue.operations.length>0}catch{hasPendingQueue=true}}
+   let adoptedGeneration=false;
+   if(generationMismatch){
+    if(empty(local)&&!hasPendingQueue){next=remote.data===null?local:remote.data;adoptedGeneration=true}
+    else{resetRequired=true;status(hasPendingQueue?'リセット世代が変わりました。未送信データを保持するため同期を停止しました。バックアップを保存して内容を確認してください。':'本番のリセット世代が変わりました。この端末に学習記録があるため同期を停止しました。記録を保持しています。');return}
+   }
+   if(!adoptedGeneration&&!meta&&generation!=='initial'&&!empty(local)){resetRequired=true;status('本番データは初期化済みですが、この端末に古い記録があります。端末初期化後に同期してください。');return}
+   if(!adoptedGeneration&&!meta){
     if(remote.data===null){
       if(empty(local)){next=local;}
       else {status('この端末に既存の学習記録が見つかりました。空のクラウドへの初回同期は停止しました。端末の記録は保持されています。内容を確認してください。');return;}
