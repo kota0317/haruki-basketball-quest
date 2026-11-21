@@ -233,8 +233,12 @@ export function applyOperation(stateValue, operation) {
         state.rpg.wordAnswerEvents ||= {};
         state.rpg.wordAnswerEvents[payload.record.eventId] = { date: payload.record.date, correct: !!payload.record.correct, time: Number(payload.record.time) || 0 };
         const date = payload.record.date;
-        if (state.rpg.streakDate !== date) { state.rpg.streakDate = date; state.rpg.wordStreak = 0; }
-        state.rpg.wordStreak = payload.record.correct ? (Number(state.rpg.wordStreak) || 0) + 1 : 0;
+        if (!state.rpg.streakDate || date > state.rpg.streakDate) {
+          state.rpg.streakDate = date;
+          state.rpg.wordStreak = payload.record.correct ? 1 : 0;
+        } else if (date === state.rpg.streakDate) {
+          state.rpg.wordStreak = payload.record.correct ? (Number(state.rpg.wordStreak) || 0) + 1 : 0;
+        }
       }
       return { status: 'applied', state };
     }
