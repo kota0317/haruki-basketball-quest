@@ -45,6 +45,7 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  db.prepare('UPDATE auth_limit SET count=0 WHERE id=1').run();
  const freshContext=await browser.newContext({viewport:{width:390,height:844}}),fresh=await freshContext.newPage();fresh.on('dialog',d=>d.accept());
  await fresh.goto('http://127.0.0.1:8798/');await fresh.evaluate(()=>go('MANAGE'));await fresh.locator('#hqCode').fill('12345');await fresh.getByText('同期を開始',{exact:true}).click();
+ await fresh.waitForTimeout(1000);console.log('generation adoption status',await fresh.locator('#syncStatus').innerText(),await fresh.evaluate(()=>({meta:localStorage.getItem('hq-sync-meta-v1'),code:localStorage.getItem('hq-sync-code-v1'),records:empty(s)})));
  await fresh.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
  assert.equal(await fresh.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation),'qa-populated-generation-2');
  const adopted=await fresh.evaluate(()=>({menus:s.questData.menus.map(x=>x.title),sessions:s.sessions.length,answers:s.answers.length,events:s.learningEvents?.length||0,completions:Object.keys(s.questData.completions).length,bonusXP:s.rpg.bonusXP}));
