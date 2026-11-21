@@ -37,6 +37,42 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  assert.deepEqual(await a.evaluate(()=>({quest:questXP(),bonus:rpgXP(),level:level()})),beforeNoAward);
  assert.deepEqual(await b.evaluate(()=>({quest:questXP(),bonus:rpgXP(),level:level()})),beforeNoAward);
  console.log('PASS English and game reward paths add no XP across offline sync');
+ // An empty third device adopts the populated cloud snapshot even when it has no generation metadata.
+ const savedSnapshot=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
+ const populated=JSON.parse(savedSnapshot.body);populated.__hq_sync_generation='qa-populated-generation-2';
+ db.prepare('UPDATE family_snapshot SET body=? WHERE id=1').run(JSON.stringify(populated));
+ // Keep the synthetic device cases independent of the long browser scenario's auth throttle.
+ db.prepare('UPDATE auth_limit SET count=0 WHERE id=1').run();
+ const freshContext=await browser.newContext({viewport:{width:390,height:844}}),fresh=await freshContext.newPage();fresh.on('dialog',d=>d.accept());
+ await fresh.goto('http://127.0.0.1:8798/');await fresh.evaluate(()=>go('MANAGE'));await fresh.locator('#hqCode').fill('12345');await fresh.getByText('同期を開始',{exact:true}).click();
+ await fresh.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
+ assert.equal(await fresh.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation),'qa-populated-generation-2');
+ const adopted=await fresh.evaluate(()=>({menus:s.questData.menus.map(x=>x.title),sessions:s.sessions.length,answers:s.answers.length,events:s.learningEvents?.length||0,completions:Object.keys(s.questData.completions).length,bonusXP:s.rpg.bonusXP}));
+ const cloud=JSON.parse(savedSnapshot.body);
+ assert.deepEqual(adopted,{menus:(cloud.questData.menus||[]).map(x=>x.title),sessions:(cloud.sessions||[]).length,answers:(cloud.answers||[]).length,events:(cloud.learningEvents||[]).length,completions:Object.keys(cloud.questData?.completions||{}).length,bonusXP:cloud.rpg?.bonusXP||0});
+ await freshContext.close();
+ // An empty device with stale local generation metadata follows the same safe GET-only adoption path.
+ const staleContext=await browser.newContext({viewport:{width:390,height:844}}),stale=await staleContext.newPage();stale.on('dialog',d=>d.accept());
+ await stale.goto('http://127.0.0.1:8798/');await stale.evaluate(()=>go('MANAGE'));
+ await stale.evaluate(()=>localStorage.setItem('hq-sync-meta-v1',JSON.stringify({base:emptyState(),revision:0,generation:'initial'})));
+ await stale.locator('#hqCode').fill('12345');await stale.getByText('同期を開始',{exact:true}).click();
+ await stale.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
+ assert.equal(await stale.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation),'qa-populated-generation-2');
+ assert.equal(await stale.evaluate(()=>s.questData.menus.length),JSON.parse(savedSnapshot.body).questData.menus.length);
+ await staleContext.close();
+ // A queued operation blocks automatic adoption, preserving possible unsent user data.
+ const queuedContext=await browser.newContext({viewport:{width:390,height:844}}),queued=await queuedContext.newPage();queued.on('dialog',d=>d.accept());
+ await queued.goto('http://127.0.0.1:8798/');await queued.evaluate(()=>go('MANAGE'));
+ await queued.evaluate(()=>localStorage.setItem('hq-sync-queue-v1',JSON.stringify({version:1,operations:[{operation:{id:'old-pending',type:'quest'},status:'pending'}]})));
+ await queued.locator('#hqCode').fill('12345');await queued.getByText('同期を開始',{exact:true}).click();
+ await queued.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent.includes('未送信データを保持'),null,{timeout:20000});
+ assert.equal(await queued.evaluate(()=>localStorage.getItem('hq-sync-queue-v1')!==null),true);
+ const afterQueued=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
+ assert.equal(afterQueued.revision,savedSnapshot.revision);
+ assert.deepEqual(JSON.parse(afterQueued.body),populated);
+ await queuedContext.close();
+ db.prepare('UPDATE family_snapshot SET revision=?,body=? WHERE id=1').run(savedSnapshot.revision,savedSnapshot.body);
+ console.log('PASS empty third device adopts the latest populated generation; pending queue remains protected');
  // A reset generation blocks stale snapshots, then each device clears all local progress and queue state.
  const newGeneration='qa-reset-generation-2';
  db.prepare('UPDATE family_snapshot SET revision=revision+1,body=? WHERE id=1').run(JSON.stringify({__hq_sync_generation:newGeneration}));
