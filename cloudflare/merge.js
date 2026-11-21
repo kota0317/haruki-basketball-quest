@@ -11,6 +11,23 @@
     return JSON.stringify(x);
   }
   const same=(a,b)=>stable(a)===stable(b);
+  function eventMap(events){
+    const map=new Map(),counts=new Map();
+    for(const event of events){
+      const base=typeof event?.eventId==='string'&&event.eventId?`id:${event.eventId}`:`legacy:${stable(event)}`;
+      const n=counts.get(base)||0;counts.set(base,n+1);map.set(`${base}#${n}`,event);
+    }
+    return map;
+  }
+  function mergeLearningEvents(left,right){
+    const a=eventMap(left),b=eventMap(right),out=[...left];
+    for(const [key,event] of b){
+      if(a.has(key)){
+        if(!same(a.get(key),event))return null;
+      }else out.push(event);
+    }
+    return out;
+  }
   function awardTotal(awards){
     if(!isObject(awards))return null;
     let total=0;
@@ -33,6 +50,10 @@
       if(same(l,r))return l;
       if(same(l,b))return r;
       if(same(r,b))return l;
+      if(path.length===1&&path[0]==='learningEvents'&&Array.isArray(b)&&Array.isArray(l)&&Array.isArray(r)){
+        const merged=mergeLearningEvents(l,r);
+        if(merged)return merged;
+      }
       // Only recurse into existing objects. Deletion vs change must be a conflict.
       if(isObject(b)&&isObject(l)&&isObject(r)) {
         const out=Object.create(null);
@@ -119,6 +140,11 @@
     function walk(l,r,path) {
       if(same(l,r))return l===missing?missing:copy(l);
       if(l===missing)return copy(r); if(r===missing)return copy(l);
+      if(path.length===1&&path[0]==='learningEvents'&&Array.isArray(l)&&Array.isArray(r)){
+        const merged=mergeLearningEvents(l,r);
+        if(merged)return merged;
+        blocked.push({path,local:copy(l),remote:copy(r)});return copy(l);
+      }
       if(path.length===3 && path[0]==='questData' && path[1]==='menus'){
         menuConflicts.push({path,local:copy(l),remote:copy(r)});return copy(l);
       }

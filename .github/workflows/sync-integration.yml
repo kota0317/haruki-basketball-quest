@@ -17,4 +17,4 @@ jobs:
         with:
           node-version: '24'
       - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core
-      - run: CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
+      - run: node cloudflare/merge.test.cjs && node tests/worker-history.cjs && CHROME_PATH=/usr/bin/google-chrome node tests/sync-integration.cjs
