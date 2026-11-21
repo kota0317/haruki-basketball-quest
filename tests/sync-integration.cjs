@@ -49,6 +49,15 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  const cloud=JSON.parse(savedSnapshot.body);
  assert.deepEqual(adopted,{menus:(cloud.questData.menus||[]).map(x=>x.title),sessions:(cloud.sessions||[]).length,answers:(cloud.answers||[]).length,events:(cloud.learningEvents||[]).length,completions:Object.keys(cloud.questData?.completions||{}).length,bonusXP:cloud.rpg?.bonusXP||0});
  await freshContext.close();
+ // An empty device with stale local generation metadata follows the same safe GET-only adoption path.
+ const staleContext=await browser.newContext({viewport:{width:390,height:844}}),stale=await staleContext.newPage();stale.on('dialog',d=>d.accept());
+ await stale.goto('http://127.0.0.1:8798/');await stale.evaluate(()=>go('MANAGE'));
+ await stale.evaluate(()=>localStorage.setItem('hq-sync-meta-v1',JSON.stringify({base:emptyState(),revision:0,generation:'initial'})));
+ await stale.locator('#hqCode').fill('12345');await stale.getByText('同期を開始',{exact:true}).click();
+ await stale.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
+ assert.equal(await stale.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation),'qa-populated-generation-2');
+ assert.equal(await stale.evaluate(()=>s.questData.menus.length),JSON.parse(savedSnapshot.body).questData.menus.length);
+ await staleContext.close();
  // A queued operation blocks automatic adoption, preserving possible unsent user data.
  const queuedContext=await browser.newContext({viewport:{width:390,height:844}}),queued=await queuedContext.newPage();queued.on('dialog',d=>d.accept());
  await queued.goto('http://127.0.0.1:8798/');await queued.evaluate(()=>go('MANAGE'));
