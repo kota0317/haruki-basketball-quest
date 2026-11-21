@@ -54,6 +54,26 @@
         const merged=mergeLearningEvents(l,r);
         if(merged)return merged;
       }
+      // Quest completions are durable learning history. Older snapshots may omit
+      // records that were already acknowledged on another device; treating that
+      // omission as a deletion lets a stale writer erase completed work. Keep
+      // the union of completion IDs. Conflicting edits to the same record still
+      // use the normal three-way conflict handling below.
+      if(path.length===2&&path[0]==='questData'&&path[1]==='completions'&&(isObject(b)||isObject(l)||isObject(r))){
+        const bm=isObject(b)?b:Object.create(null),lm=isObject(l)?l:Object.create(null),rm=isObject(r)?r:Object.create(null);
+        const out=Object.create(null);
+        const keys=new Set([...Object.keys(bm),...Object.keys(lm),...Object.keys(rm)]);
+        for(const k of keys){
+          const hb=Object.prototype.hasOwnProperty.call(bm,k),hl=Object.prototype.hasOwnProperty.call(lm,k),hr=Object.prototype.hasOwnProperty.call(rm,k);
+          let value;
+          if(hl&&hr)value=walk(hb?bm[k]:missing,lm[k],rm[k],path.concat(k));
+          else if(hl)value=lm[k];
+          else if(hr)value=rm[k];
+          else if(hb)value=bm[k]; // no tombstones exist, so preserve acknowledged history
+          if(value!==missing)Object.defineProperty(out,k,{value,enumerable:true,writable:true,configurable:true});
+        }
+        return out;
+      }
       // Only recurse into existing objects. Deletion vs change must be a conflict.
       if(isObject(b)&&isObject(l)&&isObject(r)) {
         const out=Object.create(null);
