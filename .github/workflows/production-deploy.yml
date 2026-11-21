@@ -140,7 +140,7 @@ jobs:
           # Resolve the actual Cloudflare workers.dev subdomain without logging credentials or snapshot content.
           req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']+'/workers/subdomain',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
           with urllib.request.urlopen(req,timeout=30) as r:sub=json.load(r)['result']['subdomain']
-          base='https://'+worker+'.'+sub
+          base='https://'+worker+'.'+sub+'.workers.dev'
           def call(path,method='GET',body=None):
               data=None if body is None else json.dumps(body).encode()
               headers={'Origin':'https://kota0317.github.io','X-Family-Code':code}
