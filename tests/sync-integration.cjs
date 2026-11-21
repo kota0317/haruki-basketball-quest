@@ -37,6 +37,31 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  assert.deepEqual(await a.evaluate(()=>({quest:questXP(),bonus:rpgXP(),level:level()})),beforeNoAward);
  assert.deepEqual(await b.evaluate(()=>({quest:questXP(),bonus:rpgXP(),level:level()})),beforeNoAward);
  console.log('PASS English and game reward paths add no XP across offline sync');
+ // Three distinct browser profiles: wife joins, adds a quest, then completes it; both existing devices must converge.
+ const wifeContext=await browser.newContext({viewport:{width:390,height:844}}),wife=await wifeContext.newPage();wife.on('dialog',d=>d.accept());
+ await wife.goto('http://127.0.0.1:8798/');await wife.evaluate(()=>go('MANAGE'));await wife.locator('#hqCode').fill('12345');await wife.getByText('同期を開始',{exact:true}).click();
+ await wife.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
+ const digest=()=>({menus:s.questData.menus.map(x=>({id:x.id,title:x.title,deleted:!!x.deleted})).sort((x,y)=>x.id.localeCompare(y.id)),completions:s.questData.completions,questXP:questXP(),bonusXP:rpgXP(),level:level(),sessions:s.sessions});
+ await a.evaluate(()=>hqSyncNow());await b.evaluate(()=>hqSyncNow());
+ await a.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});await b.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
+ assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));assert.deepEqual(await wife.evaluate(digest),await b.evaluate(digest));
+ await wife.evaluate(()=>{const id='wife-three-device-'+Date.now();questState().menus.push({id,title:'妻端末 QA クエスト',subject:'数学',kind:'学校',date:today(),minutes:25,xp:150,repeat:'none',weekdays:[],order:1,deleted:false});save()});
+ await wife.waitForFunction(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')||'null')?.base?.questData?.menus?.some(x=>x.title==='妻端末 QA クエスト'),null,{timeout:20000});
+ await a.evaluate(()=>hqSyncNow());await b.evaluate(()=>hqSyncNow());
+ await a.waitForFunction(()=>s.questData.menus.some(x=>x.title==='妻端末 QA クエスト'),null,{timeout:20000});await b.waitForFunction(()=>s.questData.menus.some(x=>x.title==='妻端末 QA クエスト'),null,{timeout:20000});
+ const wifeQuestId=await wife.evaluate(()=>s.questData.menus.find(x=>x.title==='妻端末 QA クエスト').id);
+ await wife.evaluate(id=>{s.questData.completions[id+'@'+today()]={id,date:today(),title:'妻端末 QA クエスト',subject:'数学',kind:'学校',minutes:25,xp:150};save()},wifeQuestId);
+ await wife.waitForFunction(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')||'null')?.base?.questData?.completions&&Object.keys(JSON.parse(localStorage.getItem('hq-sync-meta-v1')).base.questData.completions).some(k=>k.startsWith('wife-three-device-')),null,{timeout:20000});
+ await a.evaluate(()=>hqSyncNow());await b.evaluate(()=>hqSyncNow());
+ await a.waitForFunction(id=>!!s.questData.completions[id+'@'+today()],wifeQuestId,{timeout:20000});await b.waitForFunction(id=>!!s.questData.completions[id+'@'+today()],wifeQuestId,{timeout:20000});
+ assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));assert.deepEqual(await wife.evaluate(digest),await b.evaluate(digest));
+ const beforeReadOnly=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
+ const diagnostic=await wife.evaluate(async()=>{await hqSyncDiagnose();return document.querySelector('#hqSyncDiagnostic').textContent});
+ const diagnosis=JSON.parse(diagnostic);assert.equal(diagnosis.local.totalXP,diagnosis.cloud.totalXP);assert.equal(diagnosis.local.estimatedLevel,diagnosis.cloud.estimatedLevel);assert.equal(diagnosis.cloud.completionCount,diagnosis.local.completionCount);assert.doesNotMatch(diagnostic,/12345/);
+ const afterReadOnly=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();assert.equal(afterReadOnly.revision,beforeReadOnly.revision);assert.equal(afterReadOnly.body,beforeReadOnly.body);
+ await wife.reload();await wife.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));
+ await wifeContext.close();console.log('PASS three-browser quest create, completion, XP/level convergence and read-only diagnosis');
+
  // An empty third device adopts the populated cloud snapshot even when it has no generation metadata.
  const savedSnapshot=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
  const populated=JSON.parse(savedSnapshot.body);populated.__hq_sync_generation='qa-populated-generation-2';
