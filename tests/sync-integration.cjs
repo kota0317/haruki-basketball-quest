@@ -67,7 +67,9 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  await queued.locator('#hqCode').fill('12345');await queued.getByText('同期を開始',{exact:true}).click();
  await queued.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent.includes('未送信データを保持'),null,{timeout:20000});
  assert.equal(await queued.evaluate(()=>localStorage.getItem('hq-sync-queue-v1')!==null),true);
- assert.deepEqual(db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get(),savedSnapshot);
+ const afterQueued=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
+ assert.equal(afterQueued.revision,savedSnapshot.revision);
+ assert.deepEqual(JSON.parse(afterQueued.body),populated);
  await queuedContext.close();
  db.prepare('UPDATE family_snapshot SET revision=?,body=? WHERE id=1').run(savedSnapshot.revision,savedSnapshot.body);
  console.log('PASS empty third device adopts the latest populated generation; pending queue remains protected');
