@@ -47,13 +47,6 @@
   function merge(base,local,remote) {
     const conflicts=[];
     function walk(b,l,r,path) {
-      if(same(l,r))return l;
-      if(same(l,b))return r;
-      if(same(r,b))return l;
-      if(path.length===1&&path[0]==='learningEvents'&&Array.isArray(b)&&Array.isArray(l)&&Array.isArray(r)){
-        const merged=mergeLearningEvents(l,r);
-        if(merged)return merged;
-      }
       // Quest completions are durable learning history. Older snapshots may omit
       // records that were already acknowledged on another device; treating that
       // omission as a deletion lets a stale writer erase completed work. Keep
@@ -73,6 +66,13 @@
           if(value!==missing)Object.defineProperty(out,k,{value,enumerable:true,writable:true,configurable:true});
         }
         return out;
+      }
+      if(same(l,r))return l;
+      if(same(l,b))return r;
+      if(same(r,b))return l;
+      if(path.length===1&&path[0]==='learningEvents'&&Array.isArray(b)&&Array.isArray(l)&&Array.isArray(r)){
+        const merged=mergeLearningEvents(l,r);
+        if(merged)return merged;
       }
       // Only recurse into existing objects. Deletion vs change must be a conflict.
       if(isObject(b)&&isObject(l)&&isObject(r)) {
