@@ -62,7 +62,7 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  const diagnosis=JSON.parse(diagnostic);assert.equal(diagnosis.local.totalXP,diagnosis.cloud.totalXP);assert.equal(diagnosis.local.estimatedLevel,diagnosis.cloud.estimatedLevel);assert.equal(diagnosis.cloud.completionCount,diagnosis.local.completionCount);assert.doesNotMatch(diagnostic,/12345/);
  const afterReadOnly=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();assert.equal(afterReadOnly.revision,beforeReadOnly.revision);assert.equal(afterReadOnly.body,beforeReadOnly.body);
  db.prepare('UPDATE auth_limit SET count=0 WHERE id=1').run();
- await wife.reload();await wife.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));
+ await wife.reload();await wife.waitForFunction(id=>!!s.questData.completions[id+'@'+today()],wifeQuestId,{timeout:10000});db.prepare('UPDATE auth_limit SET count=0 WHERE id=1').run();await wife.evaluate(()=>hqSyncNow());await wife.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));
  await wifeContext.close();console.log('PASS three-browser quest create, completion, XP/level convergence and read-only diagnosis');
 
  // An empty third device adopts the populated cloud snapshot even when it has no generation metadata.
