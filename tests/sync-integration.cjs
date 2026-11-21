@@ -59,8 +59,16 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));assert.deepEqual(await wife.evaluate(digest),await b.evaluate(digest));
  const beforeReadOnly=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
  const diagnostic=await wife.evaluate(async()=>{await hqSyncDiagnose();return document.querySelector('#hqSyncDiagnostic').textContent});
- const diagnosis=JSON.parse(diagnostic);assert.equal(diagnosis.local.totalXP,diagnosis.cloud.totalXP);assert.equal(diagnosis.local.estimatedLevel,diagnosis.cloud.estimatedLevel);assert.equal(diagnosis.cloud.completionCount,diagnosis.local.completionCount);assert.doesNotMatch(diagnostic,/12345/);
+ const diagnosis=JSON.parse(diagnostic);assert.equal(diagnosis.status,'取得成功');assert.equal(diagnosis.local.totalXP,diagnosis.cloud.totalXP);assert.equal(diagnosis.local.estimatedLevel,diagnosis.cloud.estimatedLevel);assert.equal(diagnosis.cloud.completionCount,diagnosis.local.completionCount);assert.equal(diagnosis.local.resetGeneration,diagnosis.cloud.resetGeneration);assert.doesNotMatch(diagnostic,/12345/);
+ assert.equal(await wife.locator('#hqSyncDiagnosticState').innerText(),'取得成功');assert.equal(await wife.locator('#hqSyncDiagnosticPanel').isVisible(),true);
+ await wife.evaluate(()=>render());assert.equal(await wife.locator('#hqSyncDiagnostic').innerText(),diagnostic);assert.equal(await wife.locator('#hqSyncDiagnosticState').innerText(),'取得成功');
+ await wife.waitForTimeout(5);await wife.evaluate(()=>hqSyncDiagnose());const secondDiagnostic=await wife.locator('#hqSyncDiagnostic').innerText();assert.notEqual(JSON.parse(secondDiagnostic).capturedAt,'');assert.equal(JSON.parse(secondDiagnostic).status,'取得成功');
  const afterReadOnly=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();assert.equal(afterReadOnly.revision,beforeReadOnly.revision);assert.equal(afterReadOnly.body,beforeReadOnly.body);
+ let failNextDiagnostic=true;await wife.route('**/snapshot',async route=>{if(failNextDiagnostic&&route.request().method()==='GET'){failNextDiagnostic=false;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'qa_temporary_failure'})});return}await route.continue()});
+ await wife.evaluate(()=>hqSyncDiagnose());const failedDiagnostic=await wife.locator('#hqSyncDiagnostic').innerText();assert.equal(JSON.parse(failedDiagnostic).error.httpStatus,503);assert.match(failedDiagnostic,/qa_temporary_failure/);assert.equal(await wife.locator('#hqSyncDiagnosticState').innerText(),'取得失敗');
+ await wife.evaluate(()=>render());assert.equal(await wife.locator('#hqSyncDiagnostic').innerText(),failedDiagnostic);assert.equal(await wife.locator('#hqSyncDiagnosticPanel').isVisible(),true);
+ await wife.unroute('**/snapshot');await wife.evaluate(()=>hqSyncDiagnose());assert.equal(JSON.parse(await wife.locator('#hqSyncDiagnostic').innerText()).status,'取得成功');
+ await wife.evaluate(()=>hqSyncDiagnosticClose());assert.equal(await wife.locator('#hqSyncDiagnosticPanel').isVisible(),false);
  await wife.reload();await wife.waitForFunction(id=>!!s.questData.completions[id+'@'+today()],wifeQuestId,{timeout:10000});await wife.evaluate(()=>go('MANAGE'));assert.match(await wife.locator('#syncLastSuccess').innerText(),/最終同期成功：(?!まだありません)/);assert.deepEqual(await wife.evaluate(digest),await a.evaluate(digest));
  await wifeContext.close();console.log('PASS three-browser quest create, completion, XP/level convergence and read-only diagnosis');
 
