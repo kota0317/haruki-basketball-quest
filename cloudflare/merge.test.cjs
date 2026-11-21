@@ -59,3 +59,28 @@ concurrent=merge({learningEvents:baseEvents},{learningEvents:leftEvents},{learni
 assert.equal(concurrent.conflicts.length,0);assert.equal(concurrent.value.learningEvents.length,3);assert.deepEqual(new Set(concurrent.value.learningEvents.map(x=>x.eventId)),new Set(['base-1','device-a-1','device-b-1']));
 m=initial({learningEvents:leftEvents},{learningEvents:rightEvents});assert.equal(m.blocked.length,0);assert.equal(m.value.learningEvents.length,3);
 console.log('PASS learning answer history joins by attempt ID without loss or duplicates');
+
+// Synthetic reproduction of the reported unsynced-device state. Completion
+// records and their minutes/XP are retained automatically; opaque bonus XP
+// and progression metadata remain blocked instead of being guessed or added.
+const questRows={
+ 'q-a@2026-11-20':{id:'q-a',date:'2026-11-20',title:'英語',minutes:25,xp:10},
+ 'q-b@2026-11-20':{id:'q-b',date:'2026-11-20',title:'数学',minutes:25,xp:10}
+};
+const conflictBase={sessions:[],questData:{menus:{},completions:{}},rpg:{bonusXP:90,awards:{'unknown-legacy-award':true}},xpProgression:{version:1,baseLevel:1,baseQuestXP:0,baseBonusXP:90,carryXP:90}};
+const conflictLocal={sessions:[{date:'2026-11-20',kind:'学校',subject:'学習',minutes:50}],questData:{menus:{},completions:questRows},rpg:{bonusXP:85,awards:{'unknown-local-award':true}},xpProgression:{version:1,baseLevel:1,baseQuestXP:0,baseBonusXP:85,carryXP:85}};
+const conflictRemote={sessions:[],questData:{menus:{},completions:{}},rpg:{bonusXP:100,awards:{'unknown-cloud-award':true}},xpProgression:{version:1,baseLevel:1,baseQuestXP:0,baseBonusXP:100,carryXP:100}};
+const reported=merge(conflictBase,conflictLocal,conflictRemote);
+assert.equal(Object.keys(reported.value.questData.completions).length,2);
+assert.equal(Object.values(reported.value.questData.completions).reduce((n,x)=>n+x.xp,0),20);
+assert.equal(Object.values(reported.value.questData.completions).reduce((n,x)=>n+x.minutes,0),50);
+assert.equal(reported.value.sessions.reduce((n,x)=>n+x.minutes,0),50);
+assert.deepEqual(reported.conflicts.map(x=>x.path),[['xpProgression','baseBonusXP'],['xpProgression','carryXP'],['rpg']]);
+assert.equal(reported.conflicts.find(x=>x.path[0]==='rpg').local.value.bonusXP,85);
+assert.equal(reported.conflicts.find(x=>x.path[0]==='rpg').remote.value.bonusXP,100);
+assert.equal(reported.conflicts.find(x=>x.path[1]==='carryXP').local.value,85);
+assert.equal(reported.conflicts.find(x=>x.path[1]==='carryXP').remote.value,100);
+const repeated=merge(conflictLocal,reported.value,reported.value);
+assert.equal(Object.keys(repeated.value.questData.completions).length,2);
+assert.equal(Object.values(repeated.value.questData.completions).reduce((n,x)=>n+x.xp,0),20);
+console.log('PASS reported conflict fixture retains two completions and 50 minutes, deduplicates XP history and blocks ambiguous progression');

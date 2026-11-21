@@ -57,7 +57,7 @@
    else if(remote.data===null){if(generation!=='initial'&&empty(meta?.base||{}))next=local;else{status('クラウドが空のため同期を停止しました。端末の記録は保持しています。');return}}
    else {
     const merged=HQMerge.merge(transformed(meta.base),transformed(local),transformed(remote.data));
-    if(merged.conflicts.length){conflicts=merged.conflicts;conflictContext={local,remote:clone(remote.data),revision:remote.revision,generation,preview:merged.value,localSig};status('同時編集が見つかりました。内容を選択してください。');render();return;}
+    if(merged.conflicts.length){conflicts=merged.conflicts;conflictContext={local,remote:clone(remote.data),localRevision:meta?.revision??null,revision:remote.revision,generation,preview:merged.value,localSig};status('同時編集が見つかりました。変更項目と値を確認してください。まだ同期していません。');render();return;}
     next=untransform(merged.value);
    }
    if(!validState(next))throw Error('同期データの形式が不正です');
@@ -88,6 +88,7 @@
  // Resolve only an exact, still-current snapshot; a stale selection never overwrites newer edits.
  window.hqResolveConflicts=async function(){
   if(busy||!conflictContext)return;
+  if(conflicts.some(row=>isCriticalConflict(row.path))){status('XP・レベル・完了履歴の整合性が確認できないため保存を停止しています。両端末の記録は変更していません。');return}
   const choices=conflicts.map((_,i)=>document.querySelector('input[name="hq-conflict-'+i+'"]:checked')?.value);
   if(choices.some(x=>x!=='local'&&x!=='remote')){alert('すべての項目で採用する内容を選んでください');return}
   const ctx=conflictContext;
@@ -207,7 +208,11 @@
  };
  function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);if(cls)node.className=cls;return node}
  function menuDetails(m){if(!m)return '記録なし';return [m.title||'名称なし',m.subject||'科目未設定',(Number(m.minutes)||0)+'分',(Number(m.xp)||0)+' XP',m.date||'',m.repeat==='daily'?'毎日':m.repeat==='weekly'?'毎週':'',m.deleted?'削除済み':'',m.note||''].filter(Boolean).join(' ・ ')}
- function readable(v){if(v===undefined)return '記録なし';if(v===null)return 'なし';if(typeof v!=='object')return typeof v==='boolean'?(v?'あり':'なし'):String(v);if(Array.isArray(v))return v.length?v.map(x=>readable(x)).join('／'):'記録なし';if('title' in v)return menuDetails(v);const labels={xp:'XP',minutes:'学習時間',date:'日付',subject:'科目',title:'メニュー',bonusXP:'追加 XP',giantWins:'勝利数',won:'勝敗',kind:'種類',note:'内容',repeat:'繰り返し'};const parts=Object.entries(v).filter(([k])=>k!=='id').slice(0,12).map(([k,x])=>(labels[k]||'記録')+'：'+readable(x));return parts.join(' ・ ')||'記録なし'}
+ const fieldLabels={sessions:'学習時間の記録',answers:'回答記録',matches:'バスケットボール試合記録',learningEvents:'英検回答履歴',questData:'クエストデータ',menus:'クエストメニュー',completions:'クエスト完了履歴',rpg:'XP・レベル・ゲーム進捗',bonusXP:'追加XP',awards:'XP獲得イベント',plays:'試合プレー記録',giantWins:'ジャイアント戦勝利数',xpProgression:'XP・レベル進行データ',baseLevel:'基準レベル',baseQuestXP:'基準クエストXP',baseBonusXP:'基準追加XP',carryXP:'引き継ぎXP',xp:'獲得XP',minutes:'学習時間',date:'学習日',time:'記録時刻',timestamp:'変更日時',createdAt:'作成日時',updatedAt:'更新日時',eventId:'イベントID',id:'記録ID',subject:'学習分野',title:'クエスト名',kind:'学習種別',won:'勝敗',score:'スコア',opponent:'対戦相手',duration:'時間',note:'メモ',repeat:'繰り返し'};
+ function conflictPathLabel(path){if(!path.length)return '全体データ';const [root,...rest]=path;const rootLabel=fieldLabels[root]||root;return rest.length?rootLabel+' › '+rest.map(k=>fieldLabels[k]||String(k)).join(' › '):rootLabel}
+ function isCriticalConflict(path){return path?.[0]==='rpg'||path?.[0]==='xpProgression'||(path?.[0]==='questData'&&path?.[1]==='completions')}
+ function valueTimestamp(v){if(!v||typeof v!=='object')return null;if(Array.isArray(v)){for(const x of v){const t=valueTimestamp(x);if(t)return t}return null}for(const k of ['updatedAt','updated_at','timestamp','time','createdAt','created_at'])if(v[k]!==undefined&&v[k]!==null)return String(v[k]);return null}
+ function readable(v){if(v===undefined)return '記録なし';if(v===null)return 'なし';if(typeof v!=='object')return typeof v==='boolean'?(v?'あり':'なし'):String(v);if(Array.isArray(v))return v.length?'全'+v.length+'件：'+v.map((x,i)=>'['+(i+1)+'] '+readable(x)).join(' ／ '):'記録なし';if('title' in v)return menuDetails(v);const parts=Object.entries(v).slice(0,30).map(([k,x])=>(fieldLabels[k]||k)+'：'+readable(x));return parts.join(' ・ ')||'記録なし'}
  function awardSummary(r){const keys=Object.keys(r?.awards||{});if(!keys.length)return Number(r?.bonusXP)?'発生元を確認できません':'獲得記録なし';return keys.map(k=>{const parts=k.split(':'),names={word:'英単語',sentence:'文章穴埋め',dialogue:'会話穴埋め',reading:'読解',giant:'試合報酬'};return names[parts[0]]?names[parts[0]]+'（'+parts.slice(1).join('／')+'）':'不明な獲得記録（'+k+'）'}).join('、')}
  function appendComparison(app){
   if(!conflictContext&&!initialDiff)return;
@@ -236,8 +241,10 @@
    for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const button=el('button',label+'のバックアップを保存');button.type='button';button.className='secondary';button.onclick=()=>window.hqInitialBackup(key);section.appendChild(button);const wrap=el('label'),check=el('input');check.type='checkbox';check.id=key==='local'?'hqInitialLocalBackup':'hqInitialRemoteBackup';wrap.appendChild(check);wrap.appendChild(document.createTextNode(label+'のこの端末に記録がある場合、バックアップを保存して確認しました'));section.appendChild(wrap)}
    const join=el('button','両方のメニューを残して同期する');join.type='button';join.disabled=!!ctx.plan.hardErrors?.length;join.onclick=window.hqInitialMerge;section.appendChild(join);
   }else{
-   conflicts.forEach((row,i)=>{const field=el('fieldset');field.appendChild(el('legend','変更内容を比較'));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label'),radio=el('input');radio.type='radio';radio.name='hq-conflict-'+i;radio.value=key;wrap.appendChild(radio);wrap.appendChild(document.createTextNode(label+'：'+(row[key].exists?readable(row[key].value):'（削除）')));field.appendChild(wrap)}section.appendChild(field)});
-   const button=el('button','選んだ内容で同期');button.type='button';button.onclick=window.hqResolveConflicts;section.appendChild(button);
+   const hasCritical=conflicts.some(row=>isCriticalConflict(row.path));
+   section.appendChild(el('p',hasCritical?'XP・レベル・完了履歴を含む競合があります。安全な整合性を確認できるまで選択と保存を停止しています。双方の元データは保持されます。':'値を確認するまで選択・保存は不要です。競合している内容はこの端末とD1の双方に保持されています。','hq-conflict-safety'));
+   conflicts.forEach((row,i)=>{const field=el('fieldset'),path=row.path||[],localValue=row.local?.exists?row.local.value:undefined,remoteValue=row.remote?.exists?row.remote.value:undefined;field.appendChild(el('legend','競合項目：'+conflictPathLabel(path)));field.appendChild(el('small','保存フィールド：'+(path.length?path.join('.'):'（ルート全体）')));const when=valueTimestamp(localValue)||valueTimestamp(remoteValue);field.appendChild(el('small','記録された変更日時：'+(when||'記録なし')+' ／ 端末 revision '+(conflictContext.localRevision??'記録なし')+' ／ D1 revision '+conflictContext.revision));for(const [key,label] of [['local','この端末'],['remote','相手の端末']]){const wrap=el('label');if(!hasCritical){const radio=el('input');radio.type='radio';radio.name='hq-conflict-'+i;radio.value=key;wrap.appendChild(radio)}wrap.appendChild(document.createTextNode(label+'：'+(row[key].exists?readable(row[key].value):'（削除）')));field.appendChild(wrap)}section.appendChild(field)});
+   const button=el('button',hasCritical?'安全確認待ち：同期を停止中':'選んだ内容で同期');button.type='button';button.disabled=hasCritical;button.onclick=window.hqResolveConflicts;section.appendChild(button);
   }
   app.appendChild(section);
  }
