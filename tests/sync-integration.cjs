@@ -50,7 +50,7 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  await a.evaluate(()=>hqSyncNow());await b.evaluate(()=>hqSyncNow());
  await a.waitForFunction(()=>s.questData.menus.some(x=>x.title==='妻端末 QA クエスト'),null,{timeout:20000});await b.waitForFunction(()=>s.questData.menus.some(x=>x.title==='妻端末 QA クエスト'),null,{timeout:20000});
  const wifeQuestId=await wife.evaluate(()=>s.questData.menus.find(x=>x.title==='妻端末 QA クエスト').id);
- await wife.evaluate(id=>{s.questData.completions[id+'@'+today()]={id,date:today(),title:'妻端末 QA クエスト',subject:'数学',kind:'学校',minutes:25,xp:150};save()},wifeQuestId);
+ await wifeContext.setOffline(true);await wife.evaluate(id=>{s.questData.completions[id+'@'+today()]={id,date:today(),title:'妻端末 QA クエスト',subject:'数学',kind:'学校',minutes:25,xp:150};save()},wifeQuestId);await wife.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent.includes('未同期'),null,{timeout:10000});await wifeContext.setOffline(false);
  await wife.waitForFunction(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')||'null')?.base?.questData?.completions&&Object.keys(JSON.parse(localStorage.getItem('hq-sync-meta-v1')).base.questData.completions).some(k=>k.startsWith('wife-three-device-')),null,{timeout:20000});
  await a.evaluate(()=>hqSyncNow());await b.evaluate(()=>hqSyncNow());
  await a.waitForFunction(id=>!!s.questData.completions[id+'@'+today()],wifeQuestId,{timeout:20000});await b.waitForFunction(id=>!!s.questData.completions[id+'@'+today()],wifeQuestId,{timeout:20000});
