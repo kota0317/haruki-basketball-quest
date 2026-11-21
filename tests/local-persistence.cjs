@@ -1,8 +1,9 @@
 const {chromium}=require('playwright-core');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
+let browser;
 (async()=>{
- const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'/usr/bin/chromium',args:['--no-sandbox']});
+ browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'/usr/bin/chromium',args:['--no-sandbox']});
  const p=await browser.newPage({viewport:{width:390,height:844},acceptDownloads:true});
  p.on('dialog',d=>d.accept());
  const errors=[];p.on('pageerror',e=>errors.push(e.message));
@@ -27,4 +28,4 @@ const fs=require('node:fs');
  await p.evaluate(()=>{for(let i=0;i<7;i++)possession('defense')});assert.equal(await p.evaluate(()=>s.matches.length),1);await p.reload();assert.equal(await p.evaluate(()=>s.matches.length),1);
  await p.evaluate(()=>localStorage.setItem('haruki-quest-prototype-v1','{broken'));await p.reload();await p.evaluate(()=>save());assert.equal(await p.evaluate(()=>localStorage.getItem('haruki-quest-prototype-v1')),'{broken');
  assert.deepEqual(errors,[]);await browser.close();console.log('PASS: mobile viewport add/edit/complete, reload, backup/restore, match resume and corrupt data protection');
-})().catch(e=>{console.error(e);process.exitCode=1});
+})().catch(async e=>{console.error(e);if(browser)await browser.close().catch(()=>{});process.exitCode=1});
