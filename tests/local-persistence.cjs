@@ -20,7 +20,7 @@ let browser;
  await p.getByRole('button',{name:/学習サマリー/}).click();
  const dlPromise=p.waitForEvent('download');await p.getByRole('button',{name:'記録をバックアップ'}).click();const dl=await dlPromise;const path=await dl.path();const backup=JSON.parse(fs.readFileSync(path,'utf8'));assert.equal(backup.questData.menus[0].title,'英単語30語');
  await p.evaluate(()=>{s.questData.menus[0].title='changed';save()});
- await p.locator('input[type=file]').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(backup))});
+ await p.locator('input[type=file]').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(backup))});await p.waitForFunction(()=>s.questData.menus[0].title==='英単語30語');
  assert.equal(await p.evaluate(()=>s.questData.menus[0].title),'英単語30語');
  await p.reload();assert.equal(await p.evaluate(()=>s.questData.menus[0].title),'英単語30語');
  await p.evaluate(()=>{s.sessions.push({date:today(),kind:'学校',subject:'数学',minutes:25});save();startMatch(dailyTeams().find(i=>opponents[i].level===0));possession('defense')});
