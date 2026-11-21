@@ -29,6 +29,16 @@ m=initial({rpg:{bonusXP:5,awards:{'word:2026-11-20:enjp:1':true}}},{rpg:{bonusXP
 m=initial({rpg:{bonusXP:5,awards:{unknown:true}}},{rpg:{bonusXP:8,awards:{'sentence:2026-11-20:s1':true}}});assert.equal(m.blocked.length,1);assert.deepEqual(m.blocked[0].path,['rpg']);
 m=initial({questData:{completions:{bad:{id:'q',date:'2026-11-20',xp:10}}}},{questData:{completions:{}}});assert(m.hardErrors.length);
 console.log('PASS deletion retention, completion identity, XP provenance and unknown awards');
+// A stale snapshot deletion must not erase completed quest history.
+const completion={id:'q',date:'2026-11-20',title:'国語',subject:'国語',minutes:30,xp:10};
+let retained=merge({questData:{completions:{'q@2026-11-20':completion}}},{questData:{completions:{'q@2026-11-20':completion}}},{questData:{completions:{}}});
+assert.deepEqual(JSON.parse(JSON.stringify(retained.value.questData.completions)),{'q@2026-11-20':completion});
+assert.equal(retained.conflicts.length,0);
+retained=merge({questData:{completions:{}}},{questData:{completions:{'q@2026-11-20':completion}}},{questData:{completions:{}}});
+assert.deepEqual(JSON.parse(JSON.stringify(retained.value.questData.completions)),{'q@2026-11-20':completion});
+assert.equal(retained.conflicts.length,0);
+console.log('PASS stale snapshots cannot delete quest completion history');
+
 
 const baseRpg={bonusXP:0,awards:{},plays:[]};
 const a5={bonusXP:5,awards:{'word:2026-11-20:enjp:1':true},plays:[]};
