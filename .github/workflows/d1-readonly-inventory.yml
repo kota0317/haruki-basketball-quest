@@ -70,8 +70,35 @@ jobs:
                   names=[x['name'] for x in tables]
                   snapshot=None
                   if 'family_snapshot' in names:
-                      rows=query(account,dbid,'SELECT revision, length(body) AS body_bytes FROM family_snapshot WHERE id=1')
-                      snapshot=rows[0] if rows else None
+                      rows=query(account,dbid,'SELECT revision, body FROM family_snapshot WHERE id=1')
+                      if rows:
+                          row=rows[0]; body=row.get('body')
+                          snapshot={'revision':row.get('revision'),'body_bytes':len(body.encode('utf-8')) if isinstance(body,str) else None}
+                          if dbid=='31dc86e4-3cc5-42dc-a738-5a9a6259747f':
+                              stored=json.loads(body) if body else {}
+                              generation=stored.pop('__hq_sync_generation',None)
+                              qd=stored.get('questData') or {}
+                              menus=qd.get('menus') or []
+                              completions=qd.get('completions') or {}
+                              sessions=stored.get('sessions') or []
+                              progression=stored.get('xpProgression') or {}
+                              rpg=stored.get('rpg') or {}
+                              summary={
+                                  'database_name':name,'database_id':dbid,'revision':row.get('revision'),
+                                  'reset_generation':generation,
+                                  'active_quest_count':sum(1 for item in menus if not item.get('deleted')),
+                                  'completion_count':len(completions),
+                                  'quest_xp':sum(int(item.get('xp') or 0) for item in completions.values()),
+                                  'completion_minutes':sum(int(item.get('minutes') or 0) for item in completions.values()),
+                                  'session_count':len(sessions),
+                                  'session_minutes':sum(int(item.get('minutes') or 0) for item in sessions),
+                                  'eiken_history_count':len(stored.get('learningEvents') or []),
+                                  'bonus_xp':rpg.get('bonusXP',0),
+                                  'word_streak':rpg.get('wordStreak',0),
+                                  'xp_progression':{k:progression.get(k) for k in ('version','baseLevel','baseQuestXP','baseBonusXP','carryXP')},
+                              }
+                              print('PRODUCTION_SNAPSHOT_SUMMARY',json.dumps(summary,ensure_ascii=False))
+                      else:snapshot=None
               except Exception as e:
                   names=[];snapshot={'read_error':type(e).__name__}
               haruki=any(x in name.lower() for x in ('haruki','basketball','446','447'))
