@@ -135,7 +135,7 @@ jobs:
       - name: Verify a production D1 write, readback and duplicate replay
         run: |
           python3 - <<'PY'
-          import json,os,urllib.request
+          import json,os,urllib.request,urllib.error
           worker=os.environ['WORKER_NAME'];code=os.environ['FAMILY_CODE']
           # Resolve the actual Cloudflare workers.dev subdomain without logging credentials or snapshot content.
           req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']+'/workers/subdomain',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
@@ -143,10 +143,15 @@ jobs:
           base='https://'+worker+'.'+sub+'.workers.dev'
           def call(path,method='GET',body=None):
               data=None if body is None else json.dumps(body).encode()
-              headers={'Origin':'https://kota0317.github.io','X-Family-Code':code}
+              headers={'Origin':'https://kota0317.github.io','X-Family-Code':code,'User-Agent':'haruki-production-verification/1.0'}
               if body is not None:headers['Content-Type']='application/json'
               req=urllib.request.Request(base+path,data=data,headers=headers,method=method)
-              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+              except urllib.error.HTTPError as e:
+                  try:reason=json.loads(e.read()).get('error','non_json_http_error')
+                  except Exception:reason='non_json_http_error'
+                  raise SystemExit('Production probe HTTP '+str(e.code)+' ('+str(reason)+')')
           before=call('/snapshot');probe={'id':'deploy-verify-'+os.environ['GITHUB_RUN_ID'],'type':'sync.verify','baseRevision':before['revision'],'generation':before['generation'],'payload':{}}
           applied=call('/operations','POST',probe);after=call('/snapshot')
           if applied.get('status')!='applied' or after.get('revision')!=before.get('revision')+1 or after.get('data')!=before.get('data') or after.get('generation')!=before.get('generation'):
