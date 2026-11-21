@@ -1,18 +1,24 @@
 name: Deploy configured production sync API
 on:
+  push:
+    branches: [main]
+    paths: ['cloudflare/worker.mjs', 'cloudflare/operation-engine.mjs', 'cloudflare/migrations/**', '.github/workflows/production-deploy.yml']
   workflow_dispatch:
     inputs:
       worker_name:
         description: Existing dedicated production Worker name
-        required: true
+        required: false
+        default: haruki-production-inactive-44733572133
         type: string
       database_name:
         description: Dedicated production D1 database name
-        required: true
+        required: false
+        default: haruki-sync-qa-44663546163
         type: string
       database_id:
         description: Dedicated production D1 database UUID
-        required: true
+        required: false
+        default: 31dc86e4-3cc5-42dc-a738-5a9a6259747f
         type: string
 permissions:
   contents: read
@@ -25,9 +31,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       FAMILY_CODE: ${{ secrets.HARUKI_FAMILY_CODE }}
-      WORKER_NAME: ${{ inputs.worker_name }}
-      DATABASE_NAME: ${{ inputs.database_name }}
-      DATABASE_ID: ${{ inputs.database_id }}
+      WORKER_NAME: ${{ inputs.worker_name || 'haruki-production-inactive-44733572133' }}
+      DATABASE_NAME: ${{ inputs.database_name || 'haruki-sync-qa-44663546163' }}
+      DATABASE_ID: ${{ inputs.database_id || '31dc86e4-3cc5-42dc-a738-5a9a6259747f' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/setup-node@v4
@@ -74,6 +80,29 @@ jobs:
           open('wrangler.json','w').write(json.dumps(cfg))
           print('Target D1 binding and current snapshot metadata verified; data content remains undisclosed')
           PY
+      - name: Add operation ledger and archive current D1 snapshot
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request
+          account=os.environ['CLOUDFLARE_ACCOUNT_ID'];dbid=os.environ['DATABASE_ID'];token=os.environ['CLOUDFLARE_API_TOKEN'];base='https://api.cloudflare.com/client/v4/accounts/'+account+'/d1/database/'+dbid+'/query'
+          def query(sql,params=None):
+              body={'sql':sql}
+              if params is not None:body['params']=params
+              req=urllib.request.Request(base,data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=30) as r:data=json.load(r)
+              if not data.get('success'):raise SystemExit('D1 migration query failed; production data was not reset')
+              return data.get('result',[])
+          query('CREATE TABLE IF NOT EXISTS family_operation (operation_id TEXT PRIMARY KEY, type TEXT NOT NULL, payload TEXT NOT NULL, base_revision INTEGER NOT NULL, applied_revision INTEGER NOT NULL, created_at TEXT NOT NULL)')
+          query('CREATE INDEX IF NOT EXISTS family_operation_created_at ON family_operation(created_at)')
+          query('CREATE TABLE IF NOT EXISTS family_snapshot_archive (source_revision INTEGER PRIMARY KEY, body TEXT, archived_at TEXT NOT NULL)')
+          query('INSERT OR IGNORE INTO family_snapshot_archive(source_revision,body,archived_at) SELECT revision,body,datetime(\'now\') FROM family_snapshot WHERE id=1 AND revision=?',[int(os.environ['EXPECTED_REVISION'])])
+          archived=query('SELECT source_revision,body FROM family_snapshot_archive WHERE source_revision=?',[int(os.environ['EXPECTED_REVISION'])])
+          current=query('SELECT revision,body FROM family_snapshot WHERE id=1')
+          saved=archived[0].get('results',[]) if archived else [];live=current[0].get('results',[]) if current else []
+          if len(saved)!=1 or len(live)!=1 or int(live[0]['revision'])!=int(os.environ['EXPECTED_REVISION']) or saved[0].get('body')!=live[0].get('body'):
+              raise SystemExit('Snapshot archive verification failed; deployment stopped before Worker update')
+          print('PASS: exact pre-deploy D1 snapshot archived and verified; learning data was not changed')
+          PY
       - name: Deploy Worker preserving existing secrets
         run: npx wrangler deploy --keep-vars
       - name: Install family code as Worker secret
@@ -102,4 +131,28 @@ jobs:
               time.sleep(4)
           else:raise SystemExit('Could not verify production API after deployment')
           print('PASS: production binding verified; pre-deploy D1 revision, generation and data hash are unchanged')
+          PY
+      - name: Verify a production D1 write, readback and duplicate replay
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request
+          worker=os.environ['WORKER_NAME'];code=os.environ['FAMILY_CODE']
+          # Resolve the actual Cloudflare workers.dev subdomain without logging credentials or snapshot content.
+          req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']+'/workers/subdomain',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r:sub=json.load(r)['result']['subdomain']
+          base='https://'+worker+'.'+sub
+          def call(path,method='GET',body=None):
+              data=None if body is None else json.dumps(body).encode()
+              headers={'Origin':'https://kota0317.github.io','X-Family-Code':code}
+              if body is not None:headers['Content-Type']='application/json'
+              req=urllib.request.Request(base+path,data=data,headers=headers,method=method)
+              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+          before=call('/snapshot');probe={'id':'deploy-verify-'+os.environ['GITHUB_RUN_ID'],'type':'sync.verify','baseRevision':before['revision'],'generation':before['generation'],'payload':{}}
+          applied=call('/operations','POST',probe);after=call('/snapshot')
+          if applied.get('status')!='applied' or after.get('revision')!=before.get('revision')+1 or after.get('data')!=before.get('data') or after.get('generation')!=before.get('generation'):
+              raise SystemExit('Production D1 write/readback verification failed; snapshot content was not logged')
+          replay=call('/operations','POST',probe);latest=call('/snapshot')
+          if not replay.get('replayed') or latest.get('revision')!=after.get('revision') or latest.get('data')!=before.get('data'):
+              raise SystemExit('Production idempotency replay verification failed; snapshot content was not logged')
+          print('PASS: production D1 operation write, readback and duplicate replay verified; learner snapshot unchanged')
           PY

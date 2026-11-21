@@ -2,6 +2,7 @@
 'use strict';
 (function(){
  const authKey='hq-sync-code-v1', metaKey='hq-sync-meta-v1';
+ const operationModeKey='hq-sync-mode-v2', operationQueueKey='hq-sync-operations-v2', migrationRequestKey='hq-sync-migration-v2', deviceKey='hq-sync-device-id-v1';
  let busy=false, timer=null, message='', conflicts=[], conflictContext=null, initialDiff=null, resetRequired=false, diagnosticBusy=false, diagnosticRerun=false, diagnosticState='idle', diagnosticResult='', diagnosticCheckedAt='';
  try{const saved=JSON.parse(sessionStorage.getItem('hq-sync-diagnostic-v1')||'null');if(saved&&['loading','success','error'].includes(saved.state)){diagnosticState=saved.state;diagnosticResult=String(saved.result||'');diagnosticCheckedAt=String(saved.checkedAt||'')}}catch{}
  const clone=x=>JSON.parse(JSON.stringify(x));
@@ -30,9 +31,121 @@
   if(r.settings&&(r.settings.motion!=='full'||r.settings.sound!==false||r.settings.skip!==false||Object.keys(r.settings).some(k=>!['motion','sound','skip'].includes(k))))return false;
   return (!xp||(xp.baseLevel===1&&xp.baseQuestXP===0&&xp.baseBonusXP===0&&xp.carryXP===0))&&!state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!r.bonusXP&&!Object.keys(r.awards||{}).length&&!Object.keys(r.unlocked||{}).filter(k=>k!=='three'||r.unlocked[k]!==true).length&&!Object.keys(r.titles||{}).length&&!(r.plays||[]).length&&!r.giantWins&&!(Number(r.wordStreak)||0)&&!r.streakDate;
  }
- async function req(method,body,url=api()+'/snapshot'){const res=await fetch(url,{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const raw=await res.text();let data;try{data=raw?JSON.parse(raw):{}}catch{data={error:raw.slice(0,300)||'応答をJSONとして読み取れません'}}if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;e.details=typeof data.error==='string'?data.error:raw.slice(0,300);throw e}return data}
+ async function req(method,body,url=api()+'/snapshot'){const res=await fetch(url,{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const raw=await res.text();let data;try{data=raw?JSON.parse(raw):{}}catch{data={error:raw.slice(0,300)||'応答をJSONとして読み取れません'}}if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;e.details=typeof data.error==='string'?data.error:raw.slice(0,300);e.current=data.current;throw e}return data}
  function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text;const stamp=document.getElementById('syncLastSuccess'),last=readMeta()?.syncedAt;if(stamp)stamp.textContent=last?'最終同期成功：'+new Date(last).toLocaleString('ja-JP'):'最終同期成功：まだありません'}
+ const idKey=row=>row?.eventId||row?.legacyId||row?.recordId||row?.id||null;
+ const newId=()=>globalThis.crypto?.randomUUID?.()||'op-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+ function operationQueue(){try{const q=JSON.parse(localStorage.getItem(operationQueueKey)||'null');if(!q)return{version:2,operations:[]};if(q.version!==2||!Array.isArray(q.operations))throw Error();return q}catch{throw Error('未送信操作キューを読み取れません。端末データを保持して同期を停止しました。')}}
+ function saveOperationQueue(q){localStorage.setItem(operationQueueKey,JSON.stringify(q))}
+ function migrationCopy(value,baseValue){
+  const out=clone(value),device=localStorage.getItem(deviceKey)||newId();localStorage.setItem(deviceKey,device);
+  const base=baseValue&&typeof baseValue==='object'?baseValue:{};
+  for(const [collection,rows] of [['sessions',out.sessions||[]],['answers',out.answers||[]],['matches',out.matches||[]],['learningEvents',out.learningEvents||[]],['rpg.plays',out.rpg?.plays||[]]]){
+   const baseRows=collection==='rpg.plays'?(base.rpg?.plays||[]):(base[collection]||[]),counts=new Map();
+   for(const row of baseRows){const key=JSON.stringify(row);counts.set(key,(counts.get(key)||0)+1)}
+   const delta=[];for(const row of rows){const key=JSON.stringify(row),n=counts.get(key)||0;if(n){counts.set(key,n-1);continue}delta.push(row)}
+   rows.length=0;rows.push(...delta);
+   rows.forEach((row,index)=>{if(row&&!row.eventId&&!row.legacyId)row.legacyId=device+':'+collection+':'+index})
+  }
+  out.questData ||= {menus:[],completions:{}};out.questData.completions ||= {};
+  const baseMenus=new Map((base.questData?.menus||[]).map(row=>[row.id,row]));
+  out.questData.menus=(out.questData.menus||[]).filter(row=>JSON.stringify(baseMenus.get(row.id))!==JSON.stringify(row));
+  const deltaCompletions={};for(const [key,row] of Object.entries(out.questData.completions)){if(JSON.stringify(base.questData?.completions?.[key])!==JSON.stringify(row)){row.eventId||='legacy:'+key;deltaCompletions[key]=row}}
+  out.questData.completions=deltaCompletions;
+  const deltaDays={};for(const [date,sections] of Object.entries(out.eikenDaily?.days||{})){for(const [section,value] of Object.entries(sections||{})){if(JSON.stringify(base.eikenDaily?.days?.[date]?.[section])!==JSON.stringify(value)){deltaDays[date]||={};deltaDays[date][section]=value}}}
+  out.eikenDaily={days:deltaDays};
+  return out;
+ }
+ function ensureNewIds(before,after){
+  const device=localStorage.getItem(deviceKey)||newId();localStorage.setItem(deviceKey,device);
+  for(const key of Object.keys(after.questData?.completions||{})){const row=after.questData.completions[key],old=before.questData?.completions?.[key];if(row&&!old&&!row.eventId)row.eventId=newId()}
+  for(const [collection,rows] of [['sessions',after.sessions||[]],['answers',after.answers||[]],['matches',after.matches||[]],['learningEvents',after.learningEvents||[]],['rpg.plays',after.rpg?.plays||[]]]){
+   const oldRows=collection==='rpg.plays'?(before.rpg?.plays||[]):(before[collection]||[]);
+   rows.forEach((row,index)=>{if(!row||index<oldRows.length)return;if(collection==='learningEvents'){if(!row.eventId)row.eventId=newId()}else if(!row.eventId&&!row.legacyId)row.legacyId=device+':'+collection+':'+index})
+  }
+  const now=new Date().toISOString();
+  for(const menu of after.questData?.menus||[]){const old=(before.questData?.menus||[]).find(x=>x.id===menu.id);if(old&&JSON.stringify(old)!==JSON.stringify(menu)&&(!menu.updatedAt||menu.updatedAt===old.updatedAt))menu.updatedAt=now;else if(!old&&!menu.updatedAt)menu.updatedAt=now}
+ }
+ function operationChanges(before,after){
+  const changes=[],oldMenus=new Map((before.questData?.menus||[]).map(x=>[x.id,x])),newMenus=new Map((after.questData?.menus||[]).map(x=>[x.id,x]));
+  for(const id of new Set([...oldMenus.keys(),...newMenus.keys()])){
+   const old=oldMenus.get(id),next=newMenus.get(id);if(old&&(!next||(!old.deleted&&next.deleted))){changes.push({type:'quest.delete',payload:{id,expectedUpdatedAt:old.updatedAt??null,updatedAt:next?.updatedAt||new Date().toISOString()}});continue}
+   if(next&&JSON.stringify(old)!==JSON.stringify(next))changes.push({type:'quest.upsert',payload:{menu:next,expectedUpdatedAt:old?.updatedAt??null}})
+  }
+  const oldDone=before.questData?.completions||{},newDone=after.questData?.completions||{};
+  for(const key of new Set([...Object.keys(oldDone),...Object.keys(newDone)])){
+   const old=oldDone[key],next=newDone[key];if(!old&&next)changes.push({type:'quest.complete',payload:{key,completion:next}});
+   else if(old&&!next)changes.push({type:'quest.undo',payload:{key,expectedEventId:old.eventId}});
+   else if(old&&next&&JSON.stringify(old)!==JSON.stringify(next))changes.push({type:'quest.complete',payload:{key,completion:next}})
+  }
+  for(const collection of ['sessions','answers','matches','learningEvents','rpg.plays']){
+   const oldRows=collection==='rpg.plays'?(before.rpg?.plays||[]):(before[collection]||[]),newRows=collection==='rpg.plays'?(after.rpg?.plays||[]):(after[collection]||[]);
+   const keys=new Set(oldRows.map(idKey).filter(Boolean)),values=new Set(oldRows.map(JSON.stringify));
+   for(const row of newRows){const key=idKey(row);if((key&&!keys.has(key))||(!key&&!values.has(JSON.stringify(row)))){changes.push({type:'record.append',payload:{collection,record:row}});if(key)keys.add(key);values.add(JSON.stringify(row))}}
+  }
+  const setObject=(root,oldObj,newObj)=>{for(const key of new Set([...Object.keys(oldObj||{}),...Object.keys(newObj||{})]))if(JSON.stringify(oldObj?.[key])!==JSON.stringify(newObj?.[key]))changes.push({type:'state.set',payload:{path:root.split('.').concat(key),expected:oldObj?.[key],value:newObj?.[key]}})};
+  setObject('settings',before.settings,after.settings);
+  for(const date of new Set([...Object.keys(before.eikenDaily?.days||{}),...Object.keys(after.eikenDaily?.days||{})])){
+   const oldDay=before.eikenDaily?.days?.[date]||{},newDay=after.eikenDaily?.days?.[date]||{};
+   for(const section of new Set([...Object.keys(oldDay),...Object.keys(newDay)]))if(JSON.stringify(oldDay[section])!==JSON.stringify(newDay[section]))changes.push({type:'state.set',payload:{path:['eikenDaily','days',date,section],expected:oldDay[section],value:newDay[section]}})
+  }
+  const oldR=before.rpg||{},newR=after.rpg||{};
+  for(const name of ['unlocked','titles'])for(const [key,value] of Object.entries(newR[name]||{}))if(value===true&&oldR[name]?.[key]!==true)changes.push({type:'rpg.flag',payload:{collection:name,key,value:true}});
+  setObject('rpg.settings',oldR.settings,newR.settings);
+  if(Number(newR.giantWins)>Number(oldR.giantWins||0))changes.push({type:'rpg.increment',payload:{counter:'giantWins',delta:Number(newR.giantWins)-Number(oldR.giantWins||0)}});
+  if(JSON.stringify(before.activeMatch)!==JSON.stringify(after.activeMatch))changes.push({type:'state.set',payload:{path:['activeMatch'],expected:before.activeMatch,value:after.activeMatch}});
+  return changes;
+ }
+ function enqueueChanges(changes){
+  if(!changes.length)return;
+  const q=operationQueue(),createdAt=new Date().toISOString();q.operations.push(...changes.map(change=>({...change,id:newId(),status:'pending',createdAt})));saveOperationQueue(q)
+ }
+ function adoptRemote(remote,localSig){
+  const data=remote.data||emptyState(),meta=readMeta(),generation=remote.generation||'initial';
+  storeMeta({base:data,revision:remote.revision,generation,syncedAt:new Date().toISOString()});
+  if(signature(s)===localSig&&!((tab==='MANAGE'&&questFormActive))){localStorage.setItem(KEY,JSON.stringify(data));s=data;match=s.activeMatch||null;render()}
+ }
+ async function operationSync(){
+  if(busy||!code()||!api()||storageBlocked)return;busy=true;
+  try{
+   status('D1の正本を確認中…');let remote=await req('GET'),generation=remote.generation||'initial',meta=readMeta(),local=clone(s),localSig=signature(local);
+   if(meta&&(meta.generation||'initial')!==generation&&!empty(local)){resetRequired=true;status('D1の世代が変わりました。端末記録を保持して同期を停止しています。');return}
+   if(localStorage.getItem(operationModeKey)!=='events-v1'){
+    if(!empty(local)){
+     let migration;try{migration=JSON.parse(localStorage.getItem(migrationRequestKey)||'null')}catch{throw Error('移行データを読み取れません。端末記録は保持されています。')}
+     if(!migration){migration={id:newId(),type:'legacy.import',payload:{data:migrationCopy(local,meta?.base)},localSnapshot:local,baseRevision:remote.revision,generation,archiveKey:'hq-sync-local-migration-archive-'+newId()};localStorage.setItem(migration.archiveKey,JSON.stringify({createdAt:new Date().toISOString(),generation,revision:meta?.revision??null,state:local}));localStorage.setItem(migrationRequestKey,JSON.stringify(migration))}
+     let result;
+     for(let attempt=0;attempt<4;attempt++){
+      if(migration.generation!==generation)throw Error('移行対象のリセット世代が変わりました。端末記録は変更していません。');
+      migration.baseRevision=remote.revision;localStorage.setItem(migrationRequestKey,JSON.stringify(migration));
+      try{result=await req('POST',migration,api()+'/operations');break}catch(e){if(e.status===409&&e.code==='revision_conflict'){remote=await req('GET');generation=remote.generation||'initial';continue}throw e}
+     }
+     if(!result)throw Error('D1の変更が続いたため移行を保留しました。再度確認します。');
+     localStorage.removeItem(migrationRequestKey);localStorage.setItem(operationModeKey,'events-v1');remote=result.data?{revision:result.revision,generation:result.generation,data:result.data}:await req('GET');
+     const newer=clone(s);if(signature(newer)!==localSig){ensureNewIds(migration.localSnapshot||local,newer);enqueueChanges(operationChanges(migration.localSnapshot||local,newer));}
+     local=clone(s);localSig=signature(local);
+     status(result.audit?.xp||result.audit?.wordStreak?'移行完了。XP・連続正解数の端末差は監査記録に保管しました。':'既存記録を安全に移行しました。');
+    }else{
+     localStorage.setItem(operationModeKey,'events-v1');
+     status(remote.data?'D1の学習記録をこの端末に読み込みました。':'同期を開始しました。');
+    }
+   }
+   let queue=operationQueue();
+   let revisionRetries=0;
+   while(queue.operations.length){
+    const item=queue.operations[0];if(item.status==='conflict'){status('同じ記録が別端末で更新されたため、端末内の操作を保留しています。双方の記録は保持されています。');return}
+    remote=await req('GET');generation=remote.generation||'initial';meta=readMeta();
+    if(meta?.generation&&meta.generation!=='initial'&&meta.generation!==generation){resetRequired=true;status('D1の世代が変わりました。未送信操作と端末記録を保持しています。');return}
+    const request={id:item.id,type:item.type,payload:item.payload,baseRevision:remote.revision,generation};
+    try{await req('POST',request,api()+'/operations');queue.operations.shift();saveOperationQueue(queue);revisionRetries=0}
+    catch(e){if(e.status===409&&e.code==='revision_conflict'){if(++revisionRetries<4)continue;throw Error('同時更新が続いています。操作キューを保持して再試行します')}if(e.status===409&&e.code==='operation_conflict'){item.status='conflict';item.server=e.current||null;item.local=request.payload;saveOperationQueue(queue);status('同じクエストや記録が別端末で編集されました。未送信操作を残して保留しています。');return}throw e}
+   }
+   remote=await req('GET');adoptRemote(remote,signature(s));conflicts=[];conflictContext=null;initialDiff=null;resetRequired=false;status('D1と同期済み');
+  }catch(e){status(e.status===401?'家族コードを確認してください。':e.code==='operation_schema_not_ready'?'新しい同期基盤の準備が終わっていません。端末記録は保持して再試行します。':'未同期：端末記録と操作キューを保持しています（'+e.message+'）');if(!e.status||e.status>=500)schedule(10000);else if(e.status===429)schedule(30000)}
+  finally{busy=false}
+ }
  async function sync(){
+  if(code()&&api())return operationSync();
   if(busy||conflictContext||initialDiff||resetRequired||!code()||!api()||storageBlocked)return;busy=true;
   try{
    status('同期を確認中…');const remote=await req('GET'),generation=remote.generation||'initial';let meta=readMeta();const local=clone(s), localSig=signature(local);let next;
@@ -76,14 +189,35 @@
   finally{busy=false}
  }
  function schedule(delay=1200){clearTimeout(timer);timer=setTimeout(()=>{if(busy){schedule(delay);return}sync()},delay)}
- const previousSave=save;save=function(){const ok=previousSave();if(ok&&code())schedule();return ok};
+ const previousSave=save;save=function(){
+  let before={};try{before=JSON.parse(localStorage.getItem(KEY)||'{}')}catch{}
+  if(localStorage.getItem(operationModeKey)==='events-v1'){const after=clone(s);ensureNewIds(before,after);s=after}
+  const after=clone(s),ok=previousSave();
+  if(ok&&code()){
+   if(localStorage.getItem(operationModeKey)==='events-v1')try{enqueueChanges(operationChanges(before,after))}catch(e){localStorage.removeItem(operationModeKey);status('操作キューを保存できませんでした。端末記録を保持して安全な移行を再試行します（'+e.message+'）')}
+   schedule()
+  }
+  return ok
+ };
  window.hqSyncEnable=async function(){
   if(!api()){alert('同期サーバーはまだ設定されていません。');return}
   const input=document.getElementById('hqCode').value;if(!/^\d{5}$/.test(input)){alert('数字5桁を入力してください');return}
-  if(!document.getElementById('hqBackup').checked&&!empty(s)){alert('端末に記録があるため、先にバックアップを保存し、確認欄にチェックしてください');return}
   try{localStorage.setItem(authKey,input);await sync()}catch(e){alert('端末に保存できません: '+e.message)}
  };
  window.hqSyncNow=function(){if(busy){schedule();return false}return sync()};
+ window.hqResolveOperationConflict=async function(choice){
+  if(busy)return;
+  try{
+   const queue=operationQueue(),item=queue.operations[0];if(!item||item.status!=='conflict')return;
+   if(choice==='cloud'){queue.operations.shift();saveOperationQueue(queue);status('D1側の内容を採用しました。残りの操作を同期します。');await sync();return}
+   if(choice!=='local'||!['quest.upsert','quest.delete'].includes(item.type)){status('この操作は自動で重ねると履歴を変えるため、端末の操作を保留したままです。D1側を採用する場合だけ選択できます。');return}
+   const current=item.server,expectedUpdatedAt=current?.updatedAt??null;
+   if(item.type==='quest.upsert')item.payload.expectedUpdatedAt=expectedUpdatedAt;
+   else item.payload.expectedUpdatedAt=expectedUpdatedAt;
+   item.id=newId();item.status='pending';delete item.server;delete item.local;saveOperationQueue(queue);
+   status('端末側のメニュー変更を最新状態へ適用しています。');await sync();
+  }catch(e){status('保留中の操作を読み取れません。端末記録を保持しています（'+e.message+'）')}
+ };
  window.hqSyncDisconnect=function(){localStorage.removeItem(authKey);initialDiff=null;conflictContext=null;conflicts=[];status('同期を停止しました。端末の記録は残っています。');render()};
  // Resolve only an exact, still-current snapshot; a stale selection never overwrites newer edits.
  window.hqResolveConflicts=async function(){
@@ -284,6 +418,8 @@
   }catch(e){status(e.status===401?'家族コードを確認してください。':'端末を初期化できませんでした（'+e.message+'）')}
   finally{busy=false}
  };
- const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>記録がある端末で初回統合する場合は、双方のバックアップを保存してから進めてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><section id="hqSyncDiagnosticPanel" class="box" aria-live="polite" hidden><div class="row"><strong id="hqSyncDiagnosticState"></strong><button class="secondary" type="button" onclick="hqSyncDiagnosticClose()">診断結果を閉じる</button></div><p id="hqSyncDiagnosticTime"></p><pre id="hqSyncDiagnostic" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre></section>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);app.insertAdjacentHTML('beforeend',card('<h3>クリーンスタート</h3><p>本番D1を初期化した後、親・ハルキそれぞれの端末でこの操作を行ってください。家族コードと教材・問題データは残ります。</p><button class="secondary" onclick="hqResetDevice()">この端末の学習データを初期化</button>'));updateDiagnosticPanel()};
+ const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>初回は端末の学習記録を安全に移行します。記録の比較やバックアップ操作は不要です。</p><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期・学習記録を安全に移行</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><section id="hqSyncDiagnosticPanel" class="box" aria-live="polite" hidden><div class="row"><strong id="hqSyncDiagnosticState"></strong><button class="secondary" type="button" onclick="hqSyncDiagnosticClose()">診断結果を閉じる</button></div><p id="hqSyncDiagnosticTime"></p><pre id="hqSyncDiagnostic" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre></section>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">旧方式の競合記録を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);
+  let pending;try{pending=operationQueue().operations[0]}catch{}
+  if(pending?.status==='conflict'){const panel=document.createElement('section');panel.className='card';const title=document.createElement('h3');title.textContent='同じ項目の変更を保留中';panel.appendChild(title);const note=document.createElement('p');note.textContent='端末の変更とD1の変更はどちらも保持しています。表示内容を確認してください。';panel.appendChild(note);for(const [label,value] of [['端末側',pending.local],['D1側',pending.server]]){const p=document.createElement('p');p.textContent=label+'：'+JSON.stringify(value);panel.appendChild(p)}if(['quest.upsert','quest.delete'].includes(pending.type)){const keep=document.createElement('button');keep.className='secondary';keep.textContent='端末側のメニュー変更を適用';keep.onclick=()=>hqResolveOperationConflict('local');panel.appendChild(keep)}const cloud=document.createElement('button');cloud.className='secondary';cloud.textContent='D1側を採用';cloud.onclick=()=>hqResolveOperationConflict('cloud');panel.appendChild(cloud);app.appendChild(panel)}updateDiagnosticPanel()};
  window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);if(code())schedule();
 })();
