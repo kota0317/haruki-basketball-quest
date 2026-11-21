@@ -18,7 +18,7 @@
  const signature=x=>JSON.stringify(x);
  function empty(state){
   // Only a demonstrably fresh install may be replaced during first connection.
-  const known=new Set(['sessions','answers','matches','settings','abilityBaseline','questData','eikenDaily','rpg']);
+  const known=new Set(['sessions','answers','matches','settings','abilityBaseline','questData','eikenDaily','rpg','learningEvents']);
   if(Object.keys(state).some(k=>!known.has(k)))return false;
   if(Object.keys(state.settings||{}).some(k=>!['club','exam'].includes(k))||state.settings.club!==true||state.settings.exam!==false)return false;
   if(state.abilityBaseline!==undefined&&state.abilityBaseline!==10)return false;

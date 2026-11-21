@@ -2,11 +2,11 @@ name: Basketball experience QA
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    paths: ['*.js', '*.html', '*.css', 'tests/**', '.github/workflows/experience-qa.yml']
 permissions:
   contents: read
 jobs:
   test:
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'work/ability-baseline-current' || github.head_ref == 'work/sunday-review-fix' || github.head_ref == 'work/zenchu-ability' || github.head_ref == 'work/haruki-rpg' || github.head_ref == 'work/dialogue-menu-clarity')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:

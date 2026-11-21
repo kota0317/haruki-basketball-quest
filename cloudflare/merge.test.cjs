@@ -41,3 +41,11 @@ concurrent=merge({rpg:baseRpg},{rpg:a5},{rpg:{bonusXP:5,awards:{unknown:true},pl
 assert.deepEqual(concurrent.conflicts.map(c=>c.path),[['rpg']]);
 assert.equal(concurrent.conflicts[0].remote.value.awards.unknown,true);
 console.log('PASS concurrent bonus awards are reconciled or require explicit choice');
+
+const baseEvents=[{eventId:'base-1',type:'enjp',id:1,correct:true}];
+const leftEvents=[...baseEvents,{eventId:'device-a-1',type:'dialogue',id:31,question:'A asks',selectedAnswer:'yes',correctAnswer:'yes',correct:true}];
+const rightEvents=[...baseEvents,{eventId:'device-b-1',type:'enjp',id:2,question:'word?',selectedAnswer:'wrong',correctAnswer:'right',correct:false}];
+concurrent=merge({learningEvents:baseEvents},{learningEvents:leftEvents},{learningEvents:rightEvents});
+assert.equal(concurrent.conflicts.length,0);assert.equal(concurrent.value.learningEvents.length,3);assert.deepEqual(new Set(concurrent.value.learningEvents.map(x=>x.eventId)),new Set(['base-1','device-a-1','device-b-1']));
+m=initial({learningEvents:leftEvents},{learningEvents:rightEvents});assert.equal(m.blocked.length,0);assert.equal(m.value.learningEvents.length,3);
+console.log('PASS learning answer history joins by attempt ID without loss or duplicates');
