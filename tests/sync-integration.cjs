@@ -37,6 +37,8 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  assert.deepEqual(await a.evaluate(()=>({quest:questXP(),bonus:rpgXP(),level:level()})),beforeNoAward);
  assert.deepEqual(await b.evaluate(()=>({quest:questXP(),bonus:rpgXP(),level:level()})),beforeNoAward);
  console.log('PASS English and game reward paths add no XP across offline sync');
+ // Reset only the synthetic in-memory Worker rate counter before the additional browser profile.
+ db.prepare('UPDATE auth_limit SET count=0 WHERE id=1').run();
  // Three distinct browser profiles: wife joins, adds a quest, then completes it; both existing devices must converge.
  const wifeContext=await browser.newContext({viewport:{width:390,height:844}}),wife=await wifeContext.newPage();wife.on('dialog',d=>d.accept());
  await wife.goto('http://127.0.0.1:8798/');await wife.evaluate(()=>go('MANAGE'));await wife.locator('#hqCode').fill('12345');await wife.getByText('同期を開始',{exact:true}).click();
