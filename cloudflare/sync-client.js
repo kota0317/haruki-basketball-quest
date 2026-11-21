@@ -74,7 +74,7 @@
   }catch(e){status(e.code==='reset_generation_changed'?'リセット世代が変わりました。端末初期化後に同期できます。':e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule()}
   finally{busy=false}
  }
- function schedule(){clearTimeout(timer);timer=setTimeout(sync,1200)}
+ function schedule(){clearTimeout(timer);timer=setTimeout(()=>{if(busy){schedule();return}sync()},1200)}
  const previousSave=save;save=function(){const ok=previousSave();if(ok&&code())schedule();return ok};
  window.hqSyncEnable=async function(){
   if(!api()){alert('同期サーバーはまだ設定されていません。');return}
@@ -82,7 +82,7 @@
   if(!document.getElementById('hqBackup').checked&&!empty(s)){alert('端末に記録があるため、先にバックアップを保存し、確認欄にチェックしてください');return}
   try{localStorage.setItem(authKey,input);await sync()}catch(e){alert('端末に保存できません: '+e.message)}
  };
- window.hqSyncNow=sync;
+ window.hqSyncNow=function(){if(busy){schedule();return false}return sync()};
  window.hqSyncDisconnect=function(){localStorage.removeItem(authKey);initialDiff=null;conflictContext=null;conflicts=[];status('同期を停止しました。端末の記録は残っています。');render()};
  // Resolve only an exact, still-current snapshot; a stale selection never overwrites newer edits.
  window.hqResolveConflicts=async function(){
