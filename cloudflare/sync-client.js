@@ -18,15 +18,16 @@
  const signature=x=>JSON.stringify(x);
  function empty(state){
   // Only a demonstrably fresh install may be replaced during first connection.
-  const known=new Set(['sessions','answers','matches','settings','abilityBaseline','questData','eikenDaily','rpg','learningEvents']);
+  const known=new Set(['sessions','answers','matches','settings','abilityBaseline','questData','eikenDaily','rpg','learningEvents','xpProgression']);
   if(Object.keys(state).some(k=>!known.has(k)))return false;
   if(Object.keys(state.settings||{}).some(k=>!['club','exam'].includes(k))||state.settings.club!==true||state.settings.exam!==false)return false;
   if(state.abilityBaseline!==undefined&&state.abilityBaseline!==10)return false;
+  const xp=state.xpProgression;if(xp&&(xp.version!==1||!Number.isInteger(xp.baseLevel)||!Number.isInteger(xp.baseQuestXP)||!Number.isInteger(xp.baseBonusXP)||!Number.isInteger(xp.carryXP)))return false;
   if(state.questData&&Object.keys(state.questData).some(k=>!['menus','completions'].includes(k)))return false;
   if(state.eikenDaily&&Object.keys(state.eikenDaily).some(k=>k!=='days'))return false;
   const r=state.rpg||{};if(Object.keys(r).some(k=>!['bonusXP','awards','unlocked','titles','plays','giantWins','settings'].includes(k)))return false;
   if(r.settings&&(r.settings.motion!=='full'||r.settings.sound!==false||r.settings.skip!==false||Object.keys(r.settings).some(k=>!['motion','sound','skip'].includes(k))))return false;
-  return !state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!r.bonusXP&&!Object.keys(r.awards||{}).length&&!Object.keys(r.unlocked||{}).filter(k=>k!=='three'||r.unlocked[k]!==true).length&&!Object.keys(r.titles||{}).length&&!(r.plays||[]).length&&!r.giantWins;
+  return (!xp||(xp.baseLevel===1&&xp.baseQuestXP===0&&xp.baseBonusXP===0&&xp.carryXP===0))&&!state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!r.bonusXP&&!Object.keys(r.awards||{}).length&&!Object.keys(r.unlocked||{}).filter(k=>k!=='three'||r.unlocked[k]!==true).length&&!Object.keys(r.titles||{}).length&&!(r.plays||[]).length&&!r.giantWins;
  }
  async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await res.json();if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;throw e}return data}
  function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text}

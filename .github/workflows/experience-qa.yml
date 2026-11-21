@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node tests/smoke.cjs && node tests/quest-unit.cjs && node tests/experience-unit.cjs && node tests/rpg-unit.cjs
+      - run: node tests/smoke.cjs && node tests/quest-unit.cjs && node tests/experience-unit.cjs && node tests/xp-progression-unit.cjs && node tests/rpg-unit.cjs
       - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core @fontsource/noto-sans-jp
       - run: |
           mkdir -p qa
