@@ -9,7 +9,7 @@ function rpgXP(){return Math.max(0,Number(s.rpg?.bonusXP)||0)}
 const priorLevel=level,XP_BASE_REQUIREMENT=120,XP_GROWTH_RATE=1.05;
 function xpRequirement(lv){return Math.ceil(XP_BASE_REQUIREMENT*Math.pow(XP_GROWTH_RATE,Math.max(0,lv-1)))}
 function ensureXpProgression(){
- if(s.xpProgression&&s.xpProgression.version===1&&Number.isInteger(s.xpProgression.baseLevel)&&Number.isInteger(s.xpProgression.baseQuestXP)&&Number.isInteger(s.xpProgression.carryXP))return s.xpProgression;
+ if(s.xpProgression&&s.xpProgression.version===1&&Number.isInteger(s.xpProgression.baseLevel)&&s.xpProgression.baseLevel>=1&&Number.isInteger(s.xpProgression.baseQuestXP)&&s.xpProgression.baseQuestXP>=0&&Number.isInteger(s.xpProgression.baseBonusXP)&&s.xpProgression.baseBonusXP>=0&&Number.isInteger(s.xpProgression.carryXP)&&s.xpProgression.carryXP>=0&&s.xpProgression.carryXP<XP_BASE_REQUIREMENT)return s.xpProgression;
  const oldQuestXP=Math.max(0,Math.floor(questXP())),oldBonusXP=Math.max(0,Math.floor(rpgXP())),oldLevel=Math.max(1,priorLevel()+Math.floor(((oldQuestXP%XP_BASE_REQUIREMENT)+oldBonusXP)/XP_BASE_REQUIREMENT));
  s.xpProgression={version:1,baseLevel:oldLevel,baseQuestXP:oldQuestXP,baseBonusXP:oldBonusXP,carryXP:(oldQuestXP+oldBonusXP)%XP_BASE_REQUIREMENT};
  if(!storageBlocked)save();return s.xpProgression;
