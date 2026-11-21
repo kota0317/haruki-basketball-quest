@@ -41,6 +41,8 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  const savedSnapshot=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get();
  const populated=JSON.parse(savedSnapshot.body);populated.__hq_sync_generation='qa-populated-generation-2';
  db.prepare('UPDATE family_snapshot SET body=? WHERE id=1').run(JSON.stringify(populated));
+ // Keep the synthetic device cases independent of the long browser scenario's auth throttle.
+ db.prepare('UPDATE auth_limit SET count=0 WHERE id=1').run();
  const freshContext=await browser.newContext({viewport:{width:390,height:844}}),fresh=await freshContext.newPage();fresh.on('dialog',d=>d.accept());
  await fresh.goto('http://127.0.0.1:8798/');await fresh.evaluate(()=>go('MANAGE'));await fresh.locator('#hqCode').fill('12345');await fresh.getByText('同期を開始',{exact:true}).click();
  await fresh.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
