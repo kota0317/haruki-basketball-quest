@@ -124,4 +124,18 @@ const {DatabaseSync}=require('node:sqlite');const {chromium}=require('playwright
  assert.equal(await a.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation),await b.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).generation));
  assert.equal(db.prepare('SELECT revision FROM family_snapshot WHERE id=1').get().revision,Number(await a.evaluate(()=>JSON.parse(localStorage.getItem('hq-sync-meta-v1')).revision)));
  console.log('PASS reset generation fences stale sync and clears both synthetic devices');
+ // Reproduce an unsynced learner versus cloud XP conflict after reset. The
+ // learner's completion/session records are uploaded; ambiguous XP provenance
+ // is shown with field paths and blocks all selection/write actions.
+ await child.setOffline(true);await parent.setOffline(true);
+ await a.evaluate(()=>{s.questData.completions['qa-a@2026-11-20']={id:'qa-a',date:'2026-11-20',title:'英語',minutes:25,xp:10};s.questData.completions['qa-b@2026-11-20']={id:'qa-b',date:'2026-11-20',title:'数学',minutes:25,xp:10};s.sessions.push({date:'2026-11-20',kind:'学校',subject:'学習',minutes:50});s.rpg.bonusXP=85;s.rpg.awards={'unknown-local-award':true};s.xpProgression={version:1,baseLevel:1,baseQuestXP:0,baseBonusXP:85,carryXP:85};save()});
+ await b.evaluate(()=>{s.rpg.bonusXP=100;s.rpg.awards={'unknown-cloud-award':true};s.xpProgression={version:1,baseLevel:1,baseQuestXP:0,baseBonusXP:100,carryXP:100};save()});
+ await child.setOffline(false);await a.evaluate(()=>hqSyncNow());
+ await a.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent==='同期済み',null,{timeout:20000});
+ const protectedSnapshot=db.prepare('SELECT revision,body FROM family_snapshot WHERE id=1').get(),protectedState=JSON.parse(protectedSnapshot.body);
+ assert.equal(Object.keys(protectedState.questData.completions).length,2);assert.equal(protectedState.questData.completions['qa-a@2026-11-20'].xp+protectedState.questData.completions['qa-b@2026-11-20'].xp,20);assert.equal(protectedState.sessions.reduce((n,x)=>n+x.minutes,0),50);
+ await parent.setOffline(false);await b.evaluate(()=>hqSyncNow());await b.waitForFunction(()=>document.querySelector('#syncStatus')?.textContent.includes('同時編集'),null,{timeout:20000});
+ const conflictText=await b.locator('.hq-compare').innerText();assert.match(conflictText,/XP・レベル・ゲーム進捗/);assert.match(conflictText,/xpProgression/);assert.match(conflictText,/baseBonusXP/);assert.match(conflictText,/carryXP/);assert.match(conflictText,/記録された変更日時：記録なし/);assert.equal(await b.locator('.hq-compare input[type=radio]').count(),0);assert.equal(await b.locator('.hq-compare button').last().isDisabled(),true);
+ await b.evaluate(()=>hqResolveConflicts());assert.match(await b.locator('#syncStatus').innerText(),/保存を停止/);assert.equal(db.prepare('SELECT revision FROM family_snapshot WHERE id=1').get().revision,protectedSnapshot.revision);assert.equal(await b.evaluate(()=>Object.keys(s.questData.completions).length),2);assert.equal(await b.evaluate(()=>questXP()),20);assert.equal(await b.evaluate(()=>s.sessions.reduce((n,x)=>n+x.minutes,0)),50);
+ console.log('PASS synthetic completion/time merge, Japanese XP conflict detail, and no-save block for ambiguous XP');
  }finally{await browser.close();server.close();db.close()}})().catch(e=>{console.error(e);process.exitCode=1});
