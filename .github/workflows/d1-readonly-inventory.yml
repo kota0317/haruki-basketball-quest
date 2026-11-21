@@ -1,8 +1,10 @@
+# Trigger the existing read-only inventory using its push path filter.
 name: Read-only Cloudflare D1 inventory
 on:
   push:
     branches: [work/cloudflare-parent-sync]
     paths: ['.github/workflows/d1-readonly-inventory.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
