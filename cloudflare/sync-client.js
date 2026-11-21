@@ -2,7 +2,8 @@
 'use strict';
 (function(){
  const authKey='hq-sync-code-v1', metaKey='hq-sync-meta-v1';
- let busy=false, timer=null, message='', conflicts=[], conflictContext=null, initialDiff=null, resetRequired=false, diagnosticBusy=false;
+ let busy=false, timer=null, message='', conflicts=[], conflictContext=null, initialDiff=null, resetRequired=false, diagnosticBusy=false, diagnosticRerun=false, diagnosticState='idle', diagnosticResult='', diagnosticCheckedAt='';
+ try{const saved=JSON.parse(sessionStorage.getItem('hq-sync-diagnostic-v1')||'null');if(saved&&['loading','success','error'].includes(saved.state)){diagnosticState=saved.state;diagnosticResult=String(saved.result||'');diagnosticCheckedAt=String(saved.checkedAt||'')}}catch{}
  const clone=x=>JSON.parse(JSON.stringify(x));
  const api=()=>window.HQ_SYNC_API;
  const readMeta=()=>{try{return JSON.parse(localStorage.getItem(metaKey)||'null')}catch{return null}};
@@ -29,7 +30,7 @@
   if(r.settings&&(r.settings.motion!=='full'||r.settings.sound!==false||r.settings.skip!==false||Object.keys(r.settings).some(k=>!['motion','sound','skip'].includes(k))))return false;
   return (!xp||(xp.baseLevel===1&&xp.baseQuestXP===0&&xp.baseBonusXP===0&&xp.carryXP===0))&&!state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!r.bonusXP&&!Object.keys(r.awards||{}).length&&!Object.keys(r.unlocked||{}).filter(k=>k!=='three'||r.unlocked[k]!==true).length&&!Object.keys(r.titles||{}).length&&!(r.plays||[]).length&&!r.giantWins;
  }
- async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await res.json();if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;throw e}return data}
+ async function req(method,body){const res=await fetch(api()+'/snapshot',{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const raw=await res.text();let data;try{data=raw?JSON.parse(raw):{}}catch{data={error:raw.slice(0,300)||'応答をJSONとして読み取れません'}}if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;e.details=typeof data.error==='string'?data.error:raw.slice(0,300);throw e}return data}
  function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text;const stamp=document.getElementById('syncLastSuccess'),last=readMeta()?.syncedAt;if(stamp)stamp.textContent=last?'最終同期成功：'+new Date(last).toLocaleString('ja-JP'):'最終同期成功：まだありません'}
  async function sync(){
   if(busy||conflictContext||initialDiff||resetRequired||!code()||!api()||storageBlocked)return;busy=true;
@@ -162,20 +163,47 @@
   const p=state?.xpProgression||{};let level=Math.max(1,Number(p.baseLevel)||1),remaining=(Number(p.carryXP)||0)+Math.max(0,questXP-(Number(p.baseQuestXP)||0));
   const requirement=lv=>Math.ceil(120*Math.pow(1.05,Math.max(0,lv-1)));
   for(let guard=0;guard<1000&&remaining>=requirement(level);guard++){remaining-=requirement(level);level++}
-  return {activeQuestCount:menus.filter(x=>x&&!x.deleted).length,completionCount:completed.length,completedToday:todayCompleted.length,studyMinutesToday:minutesToday,sessionCount:sessions.length,sessionMinutes:sessions.reduce((n,x)=>n+(Number(x?.minutes)||0),0),questXP,bonusXP,totalXP,estimatedLevel:level,answerCount:Array.isArray(state?.answers)?state.answers.length:0,learningEventCount:Array.isArray(state?.learningEvents)?state.learningEvents.length:0};
+  return {questCount:menus.filter(x=>x&&!x.deleted).length,activeQuestCount:menus.filter(x=>x&&!x.deleted).length,completionCount:completed.length,completedQuestCountToday:todayCompleted.length,completedToday:todayCompleted.length,studyMinutesToday:minutesToday,sessionCount:sessions.length,sessionMinutes:sessions.reduce((n,x)=>n+(Number(x?.minutes)||0),0),questXP,bonusXP,totalXP,estimatedLevel:level,answerCount:Array.isArray(state?.answers)?state.answers.length:0,learningEventCount:Array.isArray(state?.learningEvents)?state.learningEvents.length:0};
  }
  window.hqSyncDiagnose=async function(){
+  if(diagnosticBusy){diagnosticRerun=true;setDiagnostic('loading','診断中です。完了後にもう一度読み取ります。');return}
   const out=document.getElementById('hqSyncDiagnostic');if(!out)return;
-  if(diagnosticBusy){out.textContent='診断中です。完了までお待ちください。';return}
-  if(!code()){out.textContent='家族コード未接続です。同期を開始してから再試行してください。';return}
-  diagnosticBusy=true;out.textContent='最新D1を読み取り中（GETのみ・変更なし）…';
+  if(!code()){setDiagnostic('error',JSON.stringify({capturedAt:new Date().toISOString(),status:'取得失敗',error:{httpStatus:null,code:'family_code_missing',message:'家族コード未接続です。家族コードを入力して「同期を開始」してください。'}},null,2));return}
+  diagnosticBusy=true;diagnosticRerun=false;const startedAt=new Date().toISOString();setDiagnostic('loading','最新D1を読み取り中（GETのみ・変更なし）…',startedAt);
   const local=clone(s),meta=readMeta(),queueRaw=localStorage.getItem('hq-sync-queue-v1');let pendingQueueCount=0;
   try{if(queueRaw){const q=JSON.parse(queueRaw);pendingQueueCount=Array.isArray(q?.operations)?q.operations.length:null}}catch{pendingQueueCount='判読不可'}
   try{
    const remote=await req('GET'),latestMeta=readMeta();
-   out.textContent=JSON.stringify({capturedAt:new Date().toISOString(),mode:'GET only; no PUT or local writes',local:{...syncSummary(local),hasUnsyncedChanges:!meta?.base||signature(local)!==signature(meta.base),pendingQueueCount},deviceSync:{lastSuccessfulSync:meta?.syncedAt||null,lastKnownRevision:meta?.revision??null,lastKnownGenerationMatchesRemote:!!meta&&((meta.generation||'initial')===(remote.generation||'initial')),resetBlocked:resetRequired,status:message},cloud:{revision:remote.revision,generationPresent:!!remote.generation,snapshotPresent:remote.data!==null,...(remote.data===null?{}:syncSummary(remote.data))},snapshotChangedDuringDiagnostic:signature(s)!==signature(local)||latestMeta?.revision!==meta?.revision},null,2);
-  }catch(e){out.textContent='診断失敗：'+(e.status?'HTTP '+e.status+'（'+(e.code||'通信エラー')+'）':'通信エラー。接続を確認して「今すぐ同期」を再試行してください。')}
-  finally{diagnosticBusy=false}
+   if(!remote||!Number.isInteger(remote.revision)||!Object.hasOwn(remote,'data'))throw Error('応答形式が不正です');
+   const generation=remote.generation||'initial',capturedAt=new Date().toISOString();
+   const result={capturedAt,status:'取得成功',mode:'GET only; no PUT or local writes',local:{revision:meta?.revision??null,resetGeneration:meta?.generation||'initial',...syncSummary(local),hasUnsyncedChanges:!meta?.base||signature(local)!==signature(meta.base),pendingQueueCount},deviceSync:{lastSuccessfulSync:meta?.syncedAt||null,resetBlocked:resetRequired,status:message},cloud:{revision:remote.revision,resetGeneration:generation,snapshotPresent:remote.data!==null,...(remote.data===null?{questCount:0,activeQuestCount:0,completionCount:0,completedToday:0,questXP:0,bonusXP:0,totalXP:0,estimatedLevel:1}:{...syncSummary(remote.data),questCount:syncSummary(remote.data).activeQuestCount})},comparison:{revisionMatches:meta?.revision===remote.revision,resetGenerationMatches:(meta?.generation||'initial')===generation,localDataMatchesCloud:remote.data!==null&&signature(local)===signature(remote.data)},snapshotChangedDuringDiagnostic:signature(s)!==signature(local)||latestMeta?.revision!==meta?.revision};
+   setDiagnostic('success',JSON.stringify(result,null,2),capturedAt);
+  }catch(e){
+   const capturedAt=new Date().toISOString(),httpStatus=Number.isInteger(e.status)?e.status:null,detail=String(e.details||e.code||e.message||'原因不明').slice(0,500);
+   setDiagnostic('error',JSON.stringify({capturedAt,status:'取得失敗',error:{httpStatus,code:e.code||null,message:detail},retry:'家族コード・通信を確認し、「今すぐ同期」またはこの診断ボタンを再実行してください。'},null,2),capturedAt);
+  }finally{
+   diagnosticBusy=false;
+   if(diagnosticRerun){diagnosticRerun=false;window.hqSyncDiagnose()}
+  }
+ };
+
+ function setDiagnostic(state,result,checkedAt=new Date().toISOString()){
+  diagnosticState=state;diagnosticResult=String(result||'');diagnosticCheckedAt=checkedAt;
+  try{sessionStorage.setItem('hq-sync-diagnostic-v1',JSON.stringify({state:diagnosticState,result:diagnosticResult,checkedAt:diagnosticCheckedAt}))}catch{}
+  updateDiagnosticPanel();
+ }
+ function updateDiagnosticPanel(){
+  const panel=document.getElementById('hqSyncDiagnosticPanel');if(!panel)return;
+  panel.hidden=diagnosticState==='idle';
+  const label=document.getElementById('hqSyncDiagnosticState'),stamp=document.getElementById('hqSyncDiagnosticTime'),out=document.getElementById('hqSyncDiagnostic');
+  if(label)label.textContent=diagnosticState==='loading'?'読み取り中':diagnosticState==='success'?'取得成功':diagnosticState==='error'?'取得失敗':'';
+  if(stamp)stamp.textContent=diagnosticCheckedAt?'取得日時：'+new Date(diagnosticCheckedAt).toLocaleString('ja-JP'):'';
+  if(out)out.textContent=diagnosticResult;
+ }
+ window.hqSyncDiagnosticClose=function(){
+  diagnosticState='idle';diagnosticResult='';diagnosticCheckedAt='';diagnosticRerun=false;
+  try{sessionStorage.removeItem('hq-sync-diagnostic-v1')}catch{}
+  updateDiagnosticPanel();
  };
  function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);if(cls)node.className=cls;return node}
  function menuDetails(m){if(!m)return '記録なし';return [m.title||'名称なし',m.subject||'科目未設定',(Number(m.minutes)||0)+'分',(Number(m.xp)||0)+' XP',m.date||'',m.repeat==='daily'?'毎日':m.repeat==='weekly'?'毎週':'',m.deleted?'削除済み':'',m.note||''].filter(Boolean).join(' ・ ')}
@@ -241,6 +269,6 @@
   }catch(e){status(e.status===401?'家族コードを確認してください。':'端末を初期化できませんでした（'+e.message+'）')}
   finally{busy=false}
  };
- const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>記録がある端末で初回統合する場合は、双方のバックアップを保存してから進めてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><pre id="hqSyncDiagnostic" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);app.insertAdjacentHTML('beforeend',card('<h3>クリーンスタート</h3><p>本番D1を初期化した後、親・ハルキそれぞれの端末でこの操作を行ってください。家族コードと教材・問題データは残ります。</p><button class="secondary" onclick="hqResetDevice()">この端末の学習データを初期化</button>'))};
+ const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>記録がある端末で初回統合する場合は、双方のバックアップを保存してから進めてください。</p><button class="secondary" onclick="exportData()">バックアップを保存</button><p><a href="cloudflare/backup-compare.html" target="_blank" rel="noopener">統合前後のバックアップを比較</a></p><label><input id="hqBackup" type="checkbox"> バックアップを保存して確認しました</label><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期を開始</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><section id="hqSyncDiagnosticPanel" class="box" aria-live="polite" hidden><div class="row"><strong id="hqSyncDiagnosticState"></strong><button class="secondary" type="button" onclick="hqSyncDiagnosticClose()">診断結果を閉じる</button></div><p id="hqSyncDiagnosticTime"></p><pre id="hqSyncDiagnostic" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre></section>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">競合内容を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);app.insertAdjacentHTML('beforeend',card('<h3>クリーンスタート</h3><p>本番D1を初期化した後、親・ハルキそれぞれの端末でこの操作を行ってください。家族コードと教材・問題データは残ります。</p><button class="secondary" onclick="hqResetDevice()">この端末の学習データを初期化</button>'));updateDiagnosticPanel()};
  window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);if(code())schedule();
 })();
