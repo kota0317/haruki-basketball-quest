@@ -33,7 +33,7 @@ export default {async fetch(request,env){
   let raw=await request.text();if(raw.length>1000000)return json({error:'too_large'},413,origin);
   let input;try{input=JSON.parse(raw)}catch{return json({error:'invalid_json'},400,origin)}
   if(!input||typeof input.id!=='string'||!/^[A-Za-z0-9_-]{8,100}$/.test(input.id)||!Number.isSafeInteger(input.baseRevision)||input.baseRevision<0||typeof input.type!=='string'||!input.payload||typeof input.payload!=='object'||Array.isArray(input.payload))return json({error:'invalid_operation'},400,origin);
-  if(input.type!=='legacy.import'&&!['sync.verify','state.patch','quest.upsert','quest.delete','quest.complete','quest.undo','record.append','rpg.flag','rpg.increment','rpg.award'].includes(input.type))return json({error:'unsupported_operation'},422,origin);
+  if(input.type!=='legacy.import'&&!['sync.verify','state.patch','quest.upsert','quest.delete','quest.complete','quest.undo','state.set','record.append','rpg.flag','rpg.increment','rpg.award'].includes(input.type))return json({error:'unsupported_operation'},422,origin);
   if(input.type==='legacy.import'&&(!input.payload.data||typeof input.payload.data!=='object'||Array.isArray(input.payload.data)))return json({error:'invalid_migration'},400,origin);
   if(input.type==='record.append'&&(!['sessions','answers','matches','learningEvents','rpg.plays'].includes(input.payload.collection)||!input.payload.record||typeof input.payload.record!=='object'))return json({error:'invalid_record'},400,origin);
   const operationPayload=JSON.stringify({type:input.type,payload:input.payload});
