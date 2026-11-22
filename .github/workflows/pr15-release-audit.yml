@@ -31,6 +31,7 @@ jobs:
           node tests/rpg-unit.cjs
           node --test cloudflare/merge.test.cjs cloudflare/migration-preview.test.cjs cloudflare/offline-queue.test.cjs
       - run: npm install --no-save --no-package-lock --ignore-scripts playwright-core @fontsource/noto-sans-jp
+      - run: npx playwright-core install --with-deps webkit
       - name: Browser regression and isolated restore
         run: |
           mkdir -p qa
