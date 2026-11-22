@@ -1,7 +1,7 @@
 // Production sync Worker. Family code is supplied only as a Worker secret.
 import { applyOperation, importLegacy } from './operation-engine.mjs';
 const GENERATION_KEY='__hq_sync_generation';
-const json=(value,status=200,origin='')=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origin,'Vary':'Origin','Access-Control-Allow-Headers':'Content-Type, X-Family-Code','Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS'}});
+const json=(value,status=200,origin='')=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origin,'Vary':'Origin','Access-Control-Allow-Headers':'Content-Type, X-Family-Code','Access-Control-Expose-Headers':'Retry-After','Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS'}});
 function snapshot(row){
  let generation='initial',data=null;
  if(row?.body!==null&&row?.body!==undefined){
@@ -22,11 +22,17 @@ export default {async fetch(request,env){
  if(request.method==='OPTIONS')return json({},200,origin);
  if(!env.DB||!/^[0-9]{5}$/.test(env.FAMILY_CODE||''))return json({error:'not_configured',database:!!env.DB,code_configured:/^[0-9]{5}$/.test(env.FAMILY_CODE||'')},503,origin);
  const code=request.headers.get('X-Family-Code')||'';
- const minute=Math.floor(Date.now()/60000);
- const rate=await env.DB.prepare("INSERT INTO auth_limit (id,window,count) VALUES (1,?,1) ON CONFLICT(id) DO UPDATE SET count=CASE WHEN window=excluded.window THEN count+1 ELSE 1 END, window=excluded.window RETURNING count").bind(minute).first();
- if(!rate||rate.count>60)return json({error:'rate_limited'},429,origin);
  let diff=code.length^5;for(let i=0;i<5;i++)diff|=(code.charCodeAt(i)||0)^env.FAMILY_CODE.charCodeAt(i);
- if(diff!==0||!/^[0-9]{5}$/.test(code))return json({error:'unauthorized'},401,origin);
+ if(diff!==0||!/^[0-9]{5}$/.test(code)){
+  const minute=Math.floor(Date.now()/60000),retryAfter=Math.max(1,60-Math.floor(Date.now()/1000)%60);
+  const ip=request.headers.get('CF-Connecting-IP')||'unknown';
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip));
+  const ipHash=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+  await env.DB.prepare('DELETE FROM family_auth_limit WHERE window<?').bind(minute-2).run();
+  const rate=await env.DB.prepare('INSERT INTO family_auth_limit(ip_hash,window,count) VALUES(?,?,1) ON CONFLICT(ip_hash) DO UPDATE SET count=CASE WHEN window=excluded.window THEN count+1 ELSE 1 END,window=excluded.window RETURNING count').bind(ipHash,minute).first();
+  if(!rate||rate.count>20)return new Response(JSON.stringify({error:'rate_limited'}),{status:429,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origin,'Vary':'Origin','Access-Control-Allow-Headers':'Content-Type, X-Family-Code','Access-Control-Expose-Headers':'Retry-After','Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS','Retry-After':String(retryAfter)}});
+  return json({error:'unauthorized'},401,origin);
+ }
  const url=new URL(request.url);
  if(url.pathname==='/operations'){
   if(request.method!=='POST')return json({error:'method_not_allowed'},405,origin);
