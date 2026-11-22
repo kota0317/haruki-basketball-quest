@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS family_auth_limit (ip_hash TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL);
