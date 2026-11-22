@@ -148,6 +148,22 @@ function rebaseXp(state, newAward = 0) {
   state.xpProgression = { version: 1, baseLevel: level, baseQuestXP: questXP, baseBonusXP: currentBonus, carryXP: remaining };
 }
 
+function mergeCompletedEikenRun(current, incoming) {
+  const valid = run => run && typeof run === 'object' && !Array.isArray(run) &&
+    Array.isArray(run.original) && Array.isArray(run.retry) &&
+    Number.isInteger(run.index) && run.index >= 0 &&
+    Number.isInteger(run.wrong) && run.wrong >= 0 &&
+    ['first', 'retry'].includes(run.phase) && typeof run.complete === 'boolean';
+  if (!valid(current) || !valid(incoming)) return null;
+  if (JSON.stringify(current.original) !== JSON.stringify(incoming.original)) return null;
+  if (!current.complete && !incoming.complete) return null;
+  const completed = current.complete ? current : incoming;
+  const merged = clone(completed);
+  merged.wrong = Math.max(current.wrong, incoming.wrong);
+  merged.complete = true;
+  return merged;
+}
+
 export function applyOperation(stateValue, operation) {
   const state = canonicalState(stateValue);
   const payload = operation.payload || {};
@@ -268,7 +284,24 @@ export function applyOperation(stateValue, operation) {
       for (const key of path.slice(0, -1)) { if (!target[key] || typeof target[key] !== 'object') target[key] = {}; target = target[key]; }
       const key = path.at(-1);
       const current = own(target, key) ? target[key] : undefined;
-      if (JSON.stringify(current) !== JSON.stringify(expected)) return conflict(current);
+      const expectedMatches = JSON.stringify(current) === JSON.stringify(expected);
+      const eikenWordsPath = path.length === 4 && path[0] === 'eikenDaily' && path[1] === 'days' && /^\d{4}-\d{2}-\d{2}$/.test(path[2]) && path[3] === 'words';
+      if (eikenWordsPath && current?.complete === true) {
+        if (value === undefined) return { status: 'applied', state };
+        const merged = mergeCompletedEikenRun(current, value);
+        if (!merged) return conflict(current);
+        target[key] = merged;
+        return { status: 'applied', state };
+      }
+      if (eikenWordsPath && current !== undefined && value !== undefined && !expectedMatches) {
+        const merged = mergeCompletedEikenRun(current, value);
+        if (!merged) return conflict(current);
+        target[key] = merged;
+        return { status: 'applied', state };
+      }
+      if (!expectedMatches) {
+        return conflict(current);
+      }
       if (value === undefined) delete target[key]; else target[key] = clone(value);
       return { status: 'applied', state };
     }
