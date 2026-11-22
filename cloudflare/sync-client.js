@@ -37,6 +37,10 @@
  const newId=()=>globalThis.crypto?.randomUUID?.()||'op-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
  function operationQueue(){try{const q=JSON.parse(localStorage.getItem(operationQueueKey)||'null');if(!q)return{version:2,operations:[]};if(q.version!==2||!Array.isArray(q.operations))throw Error();return q}catch{throw Error('未送信操作キューを読み取れません。端末データを保持して同期を停止しました。')}}
  function saveOperationQueue(q){localStorage.setItem(operationQueueKey,JSON.stringify(q))}
+ function operationConflictReason(item){const p=item.payload?.path||[];if(item.type==='state.set'&&p[0]==='eikenDaily'&&p[1]==='days'&&p[3]==='words')return '英検の出題・復習状態が両端末で異なり、完了状態を安全に確定できません。両方の記録と操作IDを保持し、この項目だけを保留します。';if(item.type==='quest.upsert'||item.type==='quest.delete')return '同じクエストが別端末で編集されています。両方の内容を保持しています。';return 'この学習項目の変更を安全に統合できないため、両方の内容と操作IDを保持して保留します。'}
+ function conflictProgress(value){if(!value||typeof value!=='object')return '進捗データなし';if(value.complete)return '完了・誤答 '+(Number(value.wrong)||0)+' 件';const stage=value.phase==='retry'?'復習中':'初回出題中';return stage+'・問題 '+Math.max(0,Number(value.index)||0)+'/'+(Array.isArray(value.original)?value.original.length:0)+'・誤答 '+(Number(value.wrong)||0)+' 件・復習待ち '+(Array.isArray(value.retry)?value.retry.length:0)+' 件'}
+ function conflictTitle(item){const path=item.payload?.path||[];if(item.type==='state.set'&&path[0]==='eikenDaily'&&path[1]==='days'&&path[3]==='words')return '英検単語：'+path[2];const menu=item.local?.menu||item.payload?.menu;if(menu?.title)return 'クエスト：'+menu.title;return '学習項目の変更'}
+
  function migrationCopy(value,baseValue){
   const out=clone(value),device=localStorage.getItem(deviceKey)||newId();localStorage.setItem(deviceKey,device);
   const base=baseValue&&typeof baseValue==='object'?baseValue:{};
@@ -132,15 +136,17 @@
    }
    let queue=operationQueue();
    let revisionRetries=0;
-   while(queue.operations.length){
-    const item=queue.operations[0];if(item.status==='conflict'){status('同じ記録が別端末で更新されたため、端末内の操作を保留しています。双方の記録は保持されています。');return}
+   while(queue.operations.some(operation=>operation.status!=='conflict')){
+    const item=queue.operations.find(operation=>operation.status!=='conflict');if(!item)break;
     generation=remote.generation||'initial';meta=readMeta();
     if(meta?.generation&&meta.generation!=='initial'&&meta.generation!==generation){resetRequired=true;status('D1の世代が変わりました。未送信操作と端末記録を保持しています。');return}
     const request={id:item.id,type:item.type,payload:item.payload,baseRevision:remote.revision,generation};
     try{const applied=await req('POST',request,api()+'/operations');remote={...remote,revision:applied.revision??remote.revision};queue.operations.shift();saveOperationQueue(queue);revisionRetries=0}
-    catch(e){if(e.status===409&&e.code==='revision_conflict'){if(++revisionRetries<4){remote=await req('GET');continue}throw Error('同時更新が続いています。操作キューを保持して再試行します')}if(e.status===409&&e.code==='operation_conflict'){item.status='conflict';item.server=e.current||null;item.local=request.payload;saveOperationQueue(queue);status('同じクエストや記録が別端末で編集されました。未送信操作を残して保留しています。');return}throw e}
+    catch(e){if(e.status===409&&e.code==='revision_conflict'){if(++revisionRetries<4){remote=await req('GET');continue}throw Error('同時更新が続いています。操作キューを保持して再試行します')}if(e.status===409&&e.code==='operation_conflict'){item.status='conflict';item.server=e.current??null;item.local=request.payload;item.conflictReason=operationConflictReason(item);saveOperationQueue(queue);revisionRetries=0;continue}throw e}
    }
-   remote=await req('GET');adoptRemote(remote,signature(s));clearRetry();conflicts=[];conflictContext=null;initialDiff=null;resetRequired=false;status('D1と同期済み');
+   remote=await req('GET');adoptRemote(remote,signature(s));clearRetry();conflicts=[];conflictContext=null;initialDiff=null;resetRequired=false;
+   const unresolved=queue.operations.filter(operation=>operation.status==='conflict').length;
+   status(unresolved?String(unresolved)+'件の学習項目を保留しています。ほかの操作はD1と同期済みです。内容を確認してください。':'D1と同期済み');
   }catch(e){if(e.status===429||!e.status||e.status>=500){const delay=setRetry(e);status(e.status===429?'通信制限中です。端末記録と操作キューを保持しています。自動で再試行します。':'通信に失敗しました。端末記録と操作キューを保持し、自動で再試行します。');schedule(delay)}else status(e.status===401?'家族コードを確認してください。':e.code==='operation_schema_not_ready'?'新しい同期基盤の準備が終わっていません。端末記録は保持して再試行します。':'未同期：端末記録と操作キューを保持しています（'+e.message+'）')}
   finally{busy=false}
  }
@@ -211,16 +217,15 @@
   try{localStorage.setItem(authKey,input);await sync()}catch(e){alert('端末に保存できません: '+e.message)}
  };
  window.hqSyncNow=function(){if(busy){schedule();return false}return sync()};
- window.hqResolveOperationConflict=async function(choice){
+ window.hqResolveOperationConflict=async function(choice,operationId){
   if(busy)return;
   try{
-   const queue=operationQueue(),item=queue.operations[0];if(!item||item.status!=='conflict')return;
-   if(choice==='cloud'){queue.operations.shift();saveOperationQueue(queue);status('D1側の内容を採用しました。残りの操作を同期します。');await sync();return}
-   if(choice!=='local'||!['quest.upsert','quest.delete'].includes(item.type)){status('この操作は自動で重ねると履歴を変えるため、端末の操作を保留したままです。D1側を採用する場合だけ選択できます。');return}
-   const current=item.server,expectedUpdatedAt=current?.updatedAt??null;
-   if(item.type==='quest.upsert')item.payload.expectedUpdatedAt=expectedUpdatedAt;
-   else item.payload.expectedUpdatedAt=expectedUpdatedAt;
-   item.id=newId();item.status='pending';delete item.server;delete item.local;saveOperationQueue(queue);
+   const queue=operationQueue(),index=queue.operations.findIndex(operation=>operation.id===operationId&&operation.status==='conflict'),item=queue.operations[index>=0?index:queue.operations.findIndex(operation=>operation.status==='conflict')];if(!item)return;
+   const resolvedIndex=queue.operations.indexOf(item);
+   if(choice==='cloud'){queue.operations.splice(resolvedIndex,1);saveOperationQueue(queue);status('D1側の内容を採用しました。この項目以外の未送信操作は保持しています。');await sync();return}
+   if(choice!=='local'||!['quest.upsert','quest.delete'].includes(item.type)){status('この操作は両方の記録を保留しています。端末側を安全に重ねられないため、D1側を採用する場合だけ選択できます。');return}
+   const current=item.server,expectedUpdatedAt=current?.updatedAt??null;item.payload.expectedUpdatedAt=expectedUpdatedAt;
+   item.id=newId();item.status='pending';delete item.server;delete item.local;delete item.conflictReason;saveOperationQueue(queue);
    status('端末側のメニュー変更を最新状態へ適用しています。');await sync();
   }catch(e){status('保留中の操作を読み取れません。端末記録を保持しています（'+e.message+'）')}
  };
@@ -425,7 +430,7 @@
   finally{busy=false}
  };
  const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>初回は端末の学習記録を安全に移行します。記録の比較やバックアップ操作は不要です。</p><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期・学習記録を安全に移行</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><p id="syncNextRetry" aria-live="polite"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><section id="hqSyncDiagnosticPanel" class="box" aria-live="polite" hidden><div class="row"><strong id="hqSyncDiagnosticState"></strong><button class="secondary" type="button" onclick="hqSyncDiagnosticClose()">診断結果を閉じる</button></div><p id="hqSyncDiagnosticTime"></p><pre id="hqSyncDiagnostic" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre></section>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">旧方式の競合記録を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);
-  let pending;try{pending=operationQueue().operations[0]}catch{}
-  if(pending?.status==='conflict'){const panel=document.createElement('section');panel.className='card';const title=document.createElement('h3');title.textContent='同じ項目の変更を保留中';panel.appendChild(title);const note=document.createElement('p');note.textContent='端末の変更とD1の変更はどちらも保持しています。表示内容を確認してください。';panel.appendChild(note);for(const [label,value] of [['端末側',pending.local],['D1側',pending.server]]){const p=document.createElement('p');p.textContent=label+'：'+JSON.stringify(value);panel.appendChild(p)}if(['quest.upsert','quest.delete'].includes(pending.type)){const keep=document.createElement('button');keep.className='secondary';keep.textContent='端末側のメニュー変更を適用';keep.onclick=()=>hqResolveOperationConflict('local');panel.appendChild(keep)}const cloud=document.createElement('button');cloud.className='secondary';cloud.textContent='D1側を採用';cloud.onclick=()=>hqResolveOperationConflict('cloud');panel.appendChild(cloud);app.appendChild(panel)}updateDiagnosticPanel()};
+  let pending=[];try{pending=operationQueue().operations.filter(operation=>operation.status==='conflict')}catch{}
+  for(const item of pending){const panel=document.createElement('section');panel.className='card sync-conflict';const title=document.createElement('h3');title.textContent='同期確認が必要：'+conflictTitle(item);panel.appendChild(title);const reason=document.createElement('p');reason.className='sync-conflict-reason';reason.textContent=item.conflictReason||operationConflictReason(item);panel.appendChild(reason);const comparison=document.createElement('div');comparison.className='sync-conflict-comparison';for(const [label,value] of [['この端末',item.local],['D1（家族の共有記録）',item.server]]){const progressValue=item.type==='state.set'&&(item.payload?.path||[])[0]==='eikenDaily'&&label==='この端末'&&value?.value!==undefined?value.value:value;const block=document.createElement('div');block.className='sync-conflict-side';const strong=document.createElement('strong');strong.textContent=label;block.appendChild(strong);const summary=document.createElement('p');summary.className='sync-conflict-summary';if(item.type==='state.set'&&(item.payload?.path||[])[0]==='eikenDaily')summary.textContent=conflictProgress(progressValue);else if(value?.menu?.title||value?.title)summary.textContent=value.menu?.title||value.title;else summary.textContent=value===null?'該当データなし':'変更内容を保留中';block.appendChild(summary);const details=document.createElement('details');details.className='sync-conflict-details';const labelEl=document.createElement('summary');labelEl.textContent='詳細を表示';details.appendChild(labelEl);const pre=document.createElement('pre');pre.className='sync-conflict-json';pre.textContent=JSON.stringify(value,null,2);details.appendChild(pre);block.appendChild(details);comparison.appendChild(block)}panel.appendChild(comparison);const recommend=document.createElement('p');recommend.className='sync-conflict-recommendation';recommend.textContent=item.type==='state.set'&&(item.payload?.path||[])[0]==='eikenDaily'?'推奨：D1側を採用すると、完了済みの共有記録を守れます。安全な統合ができなかった場合は、この項目を保留したまま他の同期を続けます。':'推奨：両方の内容を確認し、D1側または端末側を選んでください。';panel.appendChild(recommend);const cloud=document.createElement('button');cloud.className='secondary';cloud.textContent='D1側を採用してこの項目を解決';cloud.onclick=()=>hqResolveOperationConflict('cloud',item.id);panel.appendChild(cloud);if(['quest.upsert','quest.delete'].includes(item.type)){const keep=document.createElement('button');keep.className='secondary';keep.textContent='端末側のクエスト変更を適用';keep.onclick=()=>hqResolveOperationConflict('local',item.id);panel.appendChild(keep)}app.appendChild(panel)}updateDiagnosticPanel()};
  window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);setInterval(updateRetryCountdown,1000);if(code())schedule();
 })();
