@@ -56,4 +56,15 @@ const winTwo = applyOperation(winOne.state, { id: 'game-win-0002', type: 'rpg.in
 assert.equal(winTwo.state.rpg.giantWins, 2, 'concurrent game wins are additive events');
 const flag = applyOperation(winTwo.state, { id: 'game-flag-0001', type: 'rpg.flag', payload: { collection: 'unlocked', key: 'dunk', value: true } });
 assert.equal(flag.state.rpg.unlocked.dunk, true);
+const eikenDate='2026-11-22';
+const eikenFirst={original:['enjp:1','jpen:2'],index:0,retry:[],phase:'first',wrong:0,complete:false};
+const eikenDone={original:['enjp:1','jpen:2'],index:0,retry:[],phase:'retry',wrong:2,complete:true};
+const eikenCloud={eikenDaily:{days:{[eikenDate]:{words:eikenDone}}}};
+const staleEiken=applyOperation(eikenCloud,{id:'eiken-stale-0001',type:'state.set',payload:{path:['eikenDaily','days',eikenDate,'words'],expected:eikenFirst,value:{...eikenFirst,index:1}}});
+assert.equal(staleEiken.status,'applied','a stale incomplete phone state is safely reconciled with completed D1 progress');
+assert.equal(staleEiken.state.eikenDaily.days[eikenDate].words.complete,true,'D1 completion remains authoritative');
+assert.equal(staleEiken.state.eikenDaily.days[eikenDate].words.wrong,2,'D1 review mistakes remain');
+const unsafeEiken=applyOperation({eikenDaily:{days:{[eikenDate]:{words:{...eikenFirst,index:2}}}}},{id:'eiken-unsafe-0001',type:'state.set',payload:{path:['eikenDaily','days',eikenDate,'words'],expected:eikenFirst,value:{...eikenFirst,index:1}}});
+assert.equal(unsafeEiken.status,'conflict','divergent incomplete practice states remain protected for explicit review');
+assert.equal(unsafeEiken.current.index,2);
 console.log('PASS legacy conservation, audit-only disagreements, idempotency, stale edit protection, XP-correct undo and additive game progress');
