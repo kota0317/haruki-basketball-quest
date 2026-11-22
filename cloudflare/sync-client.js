@@ -3,7 +3,7 @@
 (function(){
  const authKey='hq-sync-code-v1', metaKey='hq-sync-meta-v1';
  const operationModeKey='hq-sync-mode-v2', operationQueueKey='hq-sync-operations-v2', migrationRequestKey='hq-sync-migration-v2', deviceKey='hq-sync-device-id-v1';
- let busy=false, timer=null, message='', conflicts=[], conflictContext=null, initialDiff=null, resetRequired=false, diagnosticBusy=false, diagnosticRerun=false, diagnosticState='idle', diagnosticResult='', diagnosticCheckedAt='';
+ let busy=false, timer=null, timerAt=0, message='', conflicts=[], conflictContext=null, initialDiff=null, resetRequired=false, diagnosticBusy=false, diagnosticRerun=false, diagnosticState='idle', diagnosticResult='', diagnosticCheckedAt='';
  try{const saved=JSON.parse(sessionStorage.getItem('hq-sync-diagnostic-v1')||'null');if(saved&&['loading','success','error'].includes(saved.state)){diagnosticState=saved.state;diagnosticResult=String(saved.result||'');diagnosticCheckedAt=String(saved.checkedAt||'')}}catch{}
  const clone=x=>JSON.parse(JSON.stringify(x));
  const api=()=>window.HQ_SYNC_API;
@@ -31,8 +31,8 @@
   if(r.settings&&(r.settings.motion!=='full'||r.settings.sound!==false||r.settings.skip!==false||Object.keys(r.settings).some(k=>!['motion','sound','skip'].includes(k))))return false;
   return (!xp||(xp.baseLevel===1&&xp.baseQuestXP===0&&xp.baseBonusXP===0&&xp.carryXP===0))&&!state.sessions.length&&!state.answers.length&&!state.matches.length&&!(state.questData?.menus||[]).length&&!Object.keys(state.questData?.completions||{}).length&&!Object.values(state.eikenDaily?.days||{}).some(day=>Object.keys(day||{}).length)&&!r.bonusXP&&!Object.keys(r.awards||{}).length&&!Object.keys(r.unlocked||{}).filter(k=>k!=='three'||r.unlocked[k]!==true).length&&!Object.keys(r.titles||{}).length&&!(r.plays||[]).length&&!r.giantWins&&!(Number(r.wordStreak)||0)&&!r.streakDate;
  }
- async function req(method,body,url=api()+'/snapshot'){const res=await fetch(url,{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const raw=await res.text();let data;try{data=raw?JSON.parse(raw):{}}catch{data={error:raw.slice(0,300)||'応答をJSONとして読み取れません'}}if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;e.details=typeof data.error==='string'?data.error:raw.slice(0,300);e.current=data.current;throw e}return data}
- function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text;const stamp=document.getElementById('syncLastSuccess'),last=readMeta()?.syncedAt;if(stamp)stamp.textContent=last?'最終同期成功：'+new Date(last).toLocaleString('ja-JP'):'最終同期成功：まだありません'}
+ async function req(method,body,url=api()+'/snapshot'){const res=await fetch(url,{method,headers:{'X-Family-Code':code(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const raw=await res.text();let data;try{data=raw?JSON.parse(raw):{}}catch{data={error:raw.slice(0,300)||'応答をJSONとして読み取れません'}}if(!res.ok){const e=Error(data.error||'通信エラー');e.status=res.status;e.code=data.error;e.details=typeof data.error==='string'?data.error:raw.slice(0,300);e.current=data.current;const retry=res.headers.get('Retry-After');if(retry){const seconds=Number(retry),date=Date.parse(retry);e.retryAfterMs=Number.isFinite(seconds)&&seconds>=0?seconds*1000:Number.isFinite(date)?Math.max(0,date-Date.now()):0}throw e}return data}
+ function status(text){message=text;const el=document.getElementById('syncStatus');if(el)el.textContent=text;const stamp=document.getElementById('syncLastSuccess'),last=readMeta()?.syncedAt;if(stamp)stamp.textContent=last?'最終同期成功：'+new Date(last).toLocaleString('ja-JP'):'最終同期成功：まだありません';updateRetryCountdown()}
  const idKey=row=>row?.eventId||row?.legacyId||row?.recordId||row?.id||null;
  const newId=()=>globalThis.crypto?.randomUUID?.()||'op-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
  function operationQueue(){try{const q=JSON.parse(localStorage.getItem(operationQueueKey)||'null');if(!q)return{version:2,operations:[]};if(q.version!==2||!Array.isArray(q.operations))throw Error();return q}catch{throw Error('未送信操作キューを読み取れません。端末データを保持して同期を停止しました。')}}
@@ -105,7 +105,7 @@
   storeMeta({base:data,revision:remote.revision,generation,syncedAt:new Date().toISOString()});
   if(signature(s)===localSig&&!((tab==='MANAGE'&&questFormActive))){localStorage.setItem(KEY,JSON.stringify(data));s=data;match=s.activeMatch||null;render()}
  }
- async function operationSync(){
+ async function operationSyncUnlocked(){
   if(busy||!code()||!api()||storageBlocked)return;busy=true;
   try{
    status('D1の正本を確認中…');let remote=await req('GET'),generation=remote.generation||'initial',meta=readMeta(),local=clone(s),localSig=signature(local);
@@ -134,17 +134,18 @@
    let revisionRetries=0;
    while(queue.operations.length){
     const item=queue.operations[0];if(item.status==='conflict'){status('同じ記録が別端末で更新されたため、端末内の操作を保留しています。双方の記録は保持されています。');return}
-    remote=await req('GET');generation=remote.generation||'initial';meta=readMeta();
+    generation=remote.generation||'initial';meta=readMeta();
     if(meta?.generation&&meta.generation!=='initial'&&meta.generation!==generation){resetRequired=true;status('D1の世代が変わりました。未送信操作と端末記録を保持しています。');return}
     const request={id:item.id,type:item.type,payload:item.payload,baseRevision:remote.revision,generation};
-    try{await req('POST',request,api()+'/operations');queue.operations.shift();saveOperationQueue(queue);revisionRetries=0}
-    catch(e){if(e.status===409&&e.code==='revision_conflict'){if(++revisionRetries<4)continue;throw Error('同時更新が続いています。操作キューを保持して再試行します')}if(e.status===409&&e.code==='operation_conflict'){item.status='conflict';item.server=e.current||null;item.local=request.payload;saveOperationQueue(queue);status('同じクエストや記録が別端末で編集されました。未送信操作を残して保留しています。');return}throw e}
+    try{const applied=await req('POST',request,api()+'/operations');remote={...remote,revision:applied.revision??remote.revision};queue.operations.shift();saveOperationQueue(queue);revisionRetries=0}
+    catch(e){if(e.status===409&&e.code==='revision_conflict'){if(++revisionRetries<4){remote=await req('GET');continue}throw Error('同時更新が続いています。操作キューを保持して再試行します')}if(e.status===409&&e.code==='operation_conflict'){item.status='conflict';item.server=e.current||null;item.local=request.payload;saveOperationQueue(queue);status('同じクエストや記録が別端末で編集されました。未送信操作を残して保留しています。');return}throw e}
    }
-   remote=await req('GET');adoptRemote(remote,signature(s));conflicts=[];conflictContext=null;initialDiff=null;resetRequired=false;status('D1と同期済み');
-  }catch(e){status(e.status===401?'家族コードを確認してください。':e.code==='operation_schema_not_ready'?'新しい同期基盤の準備が終わっていません。端末記録は保持して再試行します。':'未同期：端末記録と操作キューを保持しています（'+e.message+'）');if(!e.status||e.status>=500)schedule(10000);else if(e.status===429)schedule(30000)}
+   remote=await req('GET');adoptRemote(remote,signature(s));clearRetry();conflicts=[];conflictContext=null;initialDiff=null;resetRequired=false;status('D1と同期済み');
+  }catch(e){if(e.status===429||!e.status||e.status>=500){const delay=setRetry(e);status(e.status===429?'通信制限中です。端末記録と操作キューを保持しています。自動で再試行します。':'通信に失敗しました。端末記録と操作キューを保持し、自動で再試行します。');schedule(delay)}else status(e.status===401?'家族コードを確認してください。':e.code==='operation_schema_not_ready'?'新しい同期基盤の準備が終わっていません。端末記録は保持して再試行します。':'未同期：端末記録と操作キューを保持しています（'+e.message+'）')}
   finally{busy=false}
  }
- async function sync(){
+ async function operationSync(){const state=retryState();if(state?.retryAt>Date.now()){status('通信制限中です。操作キューを保持して自動再試行を待っています。');schedule(state.retryAt-Date.now());return}if(navigator.locks?.request){return navigator.locks.request('hq-family-sync',{ifAvailable:true},lock=>{if(!lock){status('別のタブで同期中です。完了後に確認します。');schedule(2000);return}return operationSyncUnlocked()})}return operationSyncUnlocked()}
+ async function sync(){const state=retryState();if(state?.retryAt>Date.now()){status('通信制限中です。操作キューを保持して自動再試行を待っています。');schedule(state.retryAt-Date.now());return}
   if(code()&&api())return operationSync();
   if(busy||conflictContext||initialDiff||resetRequired||!code()||!api()||storageBlocked)return;busy=true;
   try{
@@ -188,7 +189,12 @@
   }catch(e){status(e.code==='reset_generation_changed'?'リセット世代が変わりました。端末初期化後に同期できます。':e.status===409?'同時更新を検出。次回再確認します。':e.status===401?'家族コードを確認してください。':'未同期：端末に保存しています（'+e.message+'）');if(e.status===409)schedule();else if(e.status===429)schedule(30000);else if(!e.status||e.status>=500)schedule(10000)}
   finally{busy=false}
  }
- function schedule(delay=1200){clearTimeout(timer);timer=setTimeout(()=>{if(busy){schedule(delay);return}sync()},delay)}
+ const retryKey='hq-sync-retry-v1';
+ function retryState(){try{return JSON.parse(localStorage.getItem(retryKey)||'null')}catch{return null}}
+ function updateRetryCountdown(){const el=document.getElementById('syncNextRetry'),state=retryState();if(!el)return;const left=Math.max(0,(state?.retryAt||0)-Date.now());el.textContent=left>0?'次回自動再試行まで：約'+Math.ceil(left/1000)+'秒':'自動再試行の待機はありません'}
+ function clearRetry(){localStorage.removeItem(retryKey);updateRetryCountdown()}
+ function setRetry(e){const previous=retryState(),attempt=Math.min(9,(previous?.attempt||0)+1),backoff=Math.min(300000,2000*Math.pow(2,attempt-1)),jitter=Math.floor(Math.random()*Math.max(250,backoff*.25)),delay=Math.max(backoff,e.retryAfterMs||0)+jitter,retryAt=Date.now()+delay;localStorage.setItem(retryKey,JSON.stringify({attempt,retryAt,reason:e.status===429?'rate_limited':'transient'}));schedule(delay);updateRetryCountdown();return delay}
+ function schedule(delay=1200){const state=retryState(),wait=state&&state.retryAt>Date.now()?state.retryAt-Date.now():delay,target=Date.now()+wait;if(timer&&timerAt<=target)return;if(timer)clearTimeout(timer);timerAt=target;timer=setTimeout(()=>{timer=null;timerAt=0;if(busy){schedule(1000);return}sync()},wait)}
  const previousSave=save;save=function(){
   let before={};try{before=JSON.parse(localStorage.getItem(KEY)||'{}')}catch{}
   if(localStorage.getItem(operationModeKey)==='events-v1'){const after=clone(s);ensureNewIds(before,after);s=after}
@@ -418,8 +424,8 @@
   }catch(e){status(e.status===401?'家族コードを確認してください。':'端末を初期化できませんでした（'+e.message+'）')}
   finally{busy=false}
  };
- const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>初回は端末の学習記録を安全に移行します。記録の比較やバックアップ操作は不要です。</p><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期・学習記録を安全に移行</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><section id="hqSyncDiagnosticPanel" class="box" aria-live="polite" hidden><div class="row"><strong id="hqSyncDiagnosticState"></strong><button class="secondary" type="button" onclick="hqSyncDiagnosticClose()">診断結果を閉じる</button></div><p id="hqSyncDiagnosticTime"></p><pre id="hqSyncDiagnostic" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre></section>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">旧方式の競合記録を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);
+ const prior=render;render=function(){prior();if(tab!=='MANAGE'&&tab!=='PARENT')return;const app=document.getElementById('app');if(!app)return;app.insertAdjacentHTML('beforeend',card(`<h3>親子同期</h3><p>初回は端末の学習記録を安全に移行します。記録の比較やバックアップ操作は不要です。</p><label>家族コード <input id="hqCode" inputmode="numeric" maxlength="5" type="password" autocomplete="off"></label><div class="row"><button onclick="hqSyncEnable()">同期・学習記録を安全に移行</button><button class="secondary" onclick="hqSyncNow()">今すぐ同期</button><button class="secondary" onclick="hqSyncDisconnect()">同期を停止</button></div><p id="syncStatus"></p><p id="syncLastSuccess"></p><p id="syncNextRetry" aria-live="polite"></p><div class="row"><button class="secondary" onclick="hqSyncDiagnose()">最新D1状態を読み取る（変更なし）</button></div><section id="hqSyncDiagnosticPanel" class="box" aria-live="polite" hidden><div class="row"><strong id="hqSyncDiagnosticState"></strong><button class="secondary" type="button" onclick="hqSyncDiagnosticClose()">診断結果を閉じる</button></div><p id="hqSyncDiagnosticTime"></p><pre id="hqSyncDiagnostic" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre></section>${conflicts.length?'<button class="secondary" onclick="hqConflictDownload()">旧方式の競合記録を保存</button>':''}`));status(message||(code()?'同期準備中':'未接続'));appendComparison(app);
   let pending;try{pending=operationQueue().operations[0]}catch{}
   if(pending?.status==='conflict'){const panel=document.createElement('section');panel.className='card';const title=document.createElement('h3');title.textContent='同じ項目の変更を保留中';panel.appendChild(title);const note=document.createElement('p');note.textContent='端末の変更とD1の変更はどちらも保持しています。表示内容を確認してください。';panel.appendChild(note);for(const [label,value] of [['端末側',pending.local],['D1側',pending.server]]){const p=document.createElement('p');p.textContent=label+'：'+JSON.stringify(value);panel.appendChild(p)}if(['quest.upsert','quest.delete'].includes(pending.type)){const keep=document.createElement('button');keep.className='secondary';keep.textContent='端末側のメニュー変更を適用';keep.onclick=()=>hqResolveOperationConflict('local');panel.appendChild(keep)}const cloud=document.createElement('button');cloud.className='secondary';cloud.textContent='D1側を採用';cloud.onclick=()=>hqResolveOperationConflict('cloud');panel.appendChild(cloud);app.appendChild(panel)}updateDiagnosticPanel()};
- window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);if(code())schedule();
+ window.addEventListener('online',schedule);document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(!document.hidden)schedule()},30000);setInterval(updateRetryCountdown,1000);if(code())schedule();
 })();

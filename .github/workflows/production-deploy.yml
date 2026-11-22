@@ -95,6 +95,7 @@ jobs:
           query('CREATE TABLE IF NOT EXISTS family_operation (operation_id TEXT PRIMARY KEY, type TEXT NOT NULL, payload TEXT NOT NULL, base_revision INTEGER NOT NULL, applied_revision INTEGER NOT NULL, created_at TEXT NOT NULL)')
           query('CREATE INDEX IF NOT EXISTS family_operation_created_at ON family_operation(created_at)')
           query('CREATE TABLE IF NOT EXISTS family_snapshot_archive (source_revision INTEGER PRIMARY KEY, body TEXT, archived_at TEXT NOT NULL)')
+          query('CREATE TABLE IF NOT EXISTS family_auth_limit (ip_hash TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL)')
           query('INSERT OR IGNORE INTO family_snapshot_archive(source_revision,body,archived_at) SELECT revision,body,datetime(\'now\') FROM family_snapshot WHERE id=1 AND revision=?',[int(os.environ['EXPECTED_REVISION'])])
           archived=query('SELECT source_revision,body FROM family_snapshot_archive WHERE source_revision=?',[int(os.environ['EXPECTED_REVISION'])])
           current=query('SELECT revision,body FROM family_snapshot WHERE id=1')

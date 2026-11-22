@@ -9,7 +9,7 @@ const fs=require('node:fs');
  db.exec(fs.readFileSync('cloudflare/schema.sql','utf8'));
  db.exec(fs.readFileSync('cloudflare/migrations/0001-operation-ledger.sql','utf8'));
  const DB={
-  prepare(sql){let params=[];return{sql,bind(...args){params=args;return this},async first(){return db.prepare(sql).get(...params)||null},get params(){return params}}},
+  prepare(sql){let params=[];return{sql,bind(...args){params=args;return this},async first(){return db.prepare(sql).get(...params)||null},async run(){return db.prepare(sql).run(...params)},get params(){return params}}},
   async batch(statements){
    db.exec('BEGIN');
    try{const results=statements.map(item=>{const result=db.prepare(item.sql).run(...item.params);return{meta:{changes:Number(result.changes)}}});db.exec('COMMIT');return results}
@@ -18,7 +18,13 @@ const fs=require('node:fs');
  };
  const origin='https://haruki.example',generation='family-generation-56';
  const env={DB,FAMILY_CODE:'54321',ALLOWED_ORIGIN:origin};
- const request=(path,method='GET',body)=>new Request(origin+path,{method,headers:{Origin:origin,'X-Family-Code':'54321',...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+
+ const request=(path,method='GET',body,code='54321',ip='test-client')=>new Request(origin+path,{method,headers:{Origin:origin,'X-Family-Code':code,'CF-Connecting-IP':ip,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ for(let i=0;i<20;i++)assert.equal((await worker.fetch(request('/snapshot','GET',undefined,'00000','bad-client-a'),env)).status,401);
+ const throttled=await worker.fetch(request('/snapshot','GET',undefined,'00000','bad-client-a'),env);
+ assert.equal(throttled.status,429);assert(Number(throttled.headers.get('Retry-After'))>=1);assert.equal((await throttled.json()).error,'rate_limited');
+ assert.equal((await worker.fetch(request('/snapshot','GET',undefined,'00000','bad-client-b'),env)).status,401);
+ for(let i=0;i<65;i++)assert.equal((await worker.fetch(request('/snapshot'),env)).status,200);
  const cloud={sessions:[],answers:[],matches:[],settings:{club:true,exam:false},questData:{menus:Array.from({length:5},(_,i)=>({id:'q'+i,title:'Quest '+i})),completions:{}},learningEvents:Array.from({length:23},(_,i)=>({eventId:'d1-'+i,date:'2026-11-21',type:'enjp',correct:true,time:i})),rpg:{bonusXP:100,wordStreak:13,streakDate:'2026-11-21',awards:{}},xpProgression:{version:1,baseLevel:1,baseQuestXP:0,baseBonusXP:100,carryXP:100}};
  const raw=JSON.stringify({...cloud,__hq_sync_generation:generation});
  db.prepare('UPDATE family_snapshot SET revision=56,body=? WHERE id=1').run(raw);
